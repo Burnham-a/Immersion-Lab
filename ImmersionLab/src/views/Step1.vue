@@ -1,7 +1,17 @@
 <template>
   <div class="Step1">
-    <h1>This is an Step1 page</h1>
+    <h1></h1>
   </div>
+  <main>
+    <br />
+    GIF of our Blender explorations
+    <br />
+    <img
+      src="@/assets/Density.gif"
+      alt="Loading"
+      style="width: 925px; height: auto"
+    />
+  </main>
 </template>
 
 <style>
