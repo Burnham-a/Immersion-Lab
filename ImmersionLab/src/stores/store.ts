@@ -1,4 +1,3 @@
-// @/stores/store.ts
 import { defineStore } from "pinia";
 import { SpeckleGraphQLClient } from "@/graphql/client.ts";
 import { userInfoQuery } from "@/graphql/queries/user-info";
@@ -9,11 +8,13 @@ export const SPECKLE_AUTH_REFRESH_TOKEN_KEY = "SpeckleDemoApp.AuthRefreshToken";
 
 interface State {
   user: any | null;
+  authToken: string | null; // Add authToken to the state
 }
 
 export const useStore = defineStore("store", {
   state: (): State => ({
     user: null,
+    authToken: localStorage.getItem(SPECKLE_AUTH_TOKEN_KEY), // Initialize authToken from localStorage
   }),
   getters: {
     isAuthenticated(): boolean {
@@ -41,7 +42,7 @@ export const useStore = defineStore("store", {
         Math.random().toString(36).substring(2, 15);
 
       // Store the challenge in localStorage
-      localStorage.setItem("SpeckleDemoApp.Challenge", challenge);
+      localStorage.setItem(SPECKLE_CHALLENGE_KEY, challenge);
 
       // Redirect to the Speckle Server auth page
       window.location.href = `${speckleServer}/authn/verify/${appId}/${challenge}`;
@@ -79,6 +80,7 @@ export const useStore = defineStore("store", {
             SPECKLE_AUTH_REFRESH_TOKEN_KEY,
             data.refreshToken
           );
+          this.authToken = data.token; // Update authToken in the state
         } else {
           console.error("Token missing in response:", data);
           throw new Error("Authentication token is missing in the response.");
@@ -90,17 +92,29 @@ export const useStore = defineStore("store", {
         throw error; // Rethrow the error for further handling in the calling code
       }
     },
-    // other actions...
     async getUser() {
-      const { data } = await SpeckleGraphQLClient.query(userInfoQuery, {});
-      this.user = data.activeUser;
+      try {
+        const { data } = await SpeckleGraphQLClient.query(userInfoQuery, {});
+        this.user = data?.activeUser || null; // Use optional chaining and provide a default value
+      } catch (error) {
+        console.error("Error fetching user data:", error);
+        this.user = null; // Ensure user is set to null in case of error
+      }
     },
-    // other actions...
     async restoreSession() {
       const token = localStorage.getItem(SPECKLE_AUTH_TOKEN_KEY);
       if (token) {
+        this.authToken = token; // Restore authToken from localStorage
         await this.getUser();
       }
+    },
+    setAuthToken(token: string) {
+      this.authToken = token;
+      localStorage.setItem(SPECKLE_AUTH_TOKEN_KEY, token);
+    },
+    clearAuthToken() {
+      this.authToken = null;
+      localStorage.removeItem(SPECKLE_AUTH_TOKEN_KEY);
     },
   },
 });

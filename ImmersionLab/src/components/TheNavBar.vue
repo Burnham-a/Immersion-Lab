@@ -3,7 +3,6 @@
   <nav class="w-full bg-gray-800">
     <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
       <div class="flex justify-between items-center h-16">
-        <span class="text-sm text-white font-medium">My First Speckle App</span>
         <button
           @click="handleSignOut"
           type="button"

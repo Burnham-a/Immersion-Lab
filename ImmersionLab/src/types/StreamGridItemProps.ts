@@ -3,4 +3,5 @@ export interface StreamGridItemProps {
   id: string;
   name: string;
   commitsCount: number;
+  description: string;
 }

@@ -1,20 +1,48 @@
 <template>
-  <div
-    class="py-5 px-5 border rounded-lg hover:shadow-lg bg-white hover:shadow-blue-100 flex justify-between"
-  >
-    <p class="text-gray-800 font-medium">{{ name }}</p>
-    <div class="flex text-gray-200 items-center space-x-3 text-sm">
-      <DocumentArrowUpIcon class="h-5 w-5" />
-      <span>{{ commitsCount }}</span>
+  <div class="border p-8 rounded-lg">
+    <div v-if="fetching" class="flex text-gray-600 justify-center text-sm">
+      Loading...
+    </div>
+    <div v-if="error" class="flex text-red-600 justify-center text-sm">
+      {{ error.message }}
+    </div>
+    <div class="grid grid-cols-3 gap-4">
+      <StreamGridItem
+        v-for="project in projects"
+        :key="project.id"
+        :id="project.id"
+        :name="project.name"
+        :description="project.description"
+        :role="project.role"
+        @select-project="selectProject"
+      />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-export interface StreamGridItemProps {
+import type { CombinedError } from "@urql/core";
+import StreamGridItem, { type StreamGridItemProps } from "./StreamGridItem.vue";
+
+export interface Project {
   id: string;
   name: string;
-  commitsCount: number;
+  description: string;
+  role: string;
+  models: { items: any[] }; // Ensure models is included
 }
-defineProps<StreamGridItemProps>();
+
+export interface StreamGridProps {
+  projects: Project[];
+  fetching?: boolean;
+  error?: CombinedError;
+}
+
+const props = defineProps<StreamGridProps>();
+
+const selectProject = (project: Project) => {
+  emit("project-selected", project);
+};
+
+const emit = defineEmits(["project-selected"]);
 </script>
