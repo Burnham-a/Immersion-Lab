@@ -95,11 +95,11 @@ export default function initializeScene(canvas) {
       case "ArrowDown":
         movement.backward = true;
         break;
-      case "KeyA":
+      case "KeyD":
       case "ArrowLeft":
         movement.left = true;
         break;
-      case "KeyD":
+      case "KeyA":
       case "ArrowRight":
         movement.right = true;
         break;
@@ -116,11 +116,11 @@ export default function initializeScene(canvas) {
       case "ArrowDown":
         movement.backward = false;
         break;
-      case "KeyA":
+      case "KeyD":
       case "ArrowLeft":
         movement.left = false;
         break;
-      case "KeyD":
+      case "KeyA":
       case "ArrowRight":
         movement.right = false;
         break;

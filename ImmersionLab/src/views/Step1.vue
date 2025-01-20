@@ -1,13 +1,9 @@
 <template>
-  <div class="Step1">
-    <h1></h1>
-  </div>
   <main>
-    <br />
-    GIF of our Blender explorations
+    <h3>GIF of our Blender explorations</h3>
     <br />
     <img
-      src="@/assets/Density.gif"
+      src="@/assets/Innovation-Inncubator-Update.gif"
       alt="Loading"
       style="width: 925px; height: auto"
     />
@@ -21,5 +17,14 @@
     display: flex;
     align-items: center;
   }
+}
+</style>
+
+<style scoped>
+h3 {
+  font-size: 1.2rem;
+  font-weight: 500;
+  margin-bottom: 0.4rem;
+  color: var(--color-heading);
 }
 </style>

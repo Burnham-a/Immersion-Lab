@@ -1,20 +1,15 @@
 <template>
-  <header>
-    <div class="wrapper">
-      <h1>Step2</h1>
-      <br />
-      Move Up - W <br />
-      Move Down - S <br />
-      Move Left - A <br />
-      Move Right - D <br />
-      Orbit - Left Mouse Click <br />
-    </div>
-    <br />
-  </header>
-
   <main>
-    <canvas ref="canvasRef" style="width: 1000px; height: auto"></canvas>
+    <h3>Step 2</h3>
+    <br />
+    Move Up - W <br />
+    Move Down - S <br />
+    Move Left - A <br />
+    Move Right - D <br />
+    Orbit - Left Mouse Click <br />
   </main>
+  <br />
+  <canvas ref="canvasRef" style="width: 1000px; height: auto"></canvas>
 </template>
 
 <script setup>
@@ -57,10 +52,14 @@ header {
     place-items: flex-start;
     flex-wrap: wrap;
   }
+}
+</style>
 
-  h3 {
-    font-size: 1.2rem;
-    text-align: center;
-  }
+<style scoped>
+h3 {
+  font-size: 1.2rem;
+  font-weight: 500;
+  margin-bottom: 0.4rem;
+  color: var(--color-heading);
 }
 </style>

@@ -14,7 +14,8 @@ export interface StreamGridItemProps {
   id: string;
   name: string;
   description: string;
-  role: string;
+  role?: string;
+  models?: { items: { id: string; name: string }[] }; // Ensure models are defined
 }
 
 const props = defineProps<StreamGridItemProps>();

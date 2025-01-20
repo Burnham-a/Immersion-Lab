@@ -14,6 +14,7 @@
         :name="project.name"
         :description="project.description"
         :role="project.role"
+        :models="project.models"
         @select-project="selectProject"
       />
     </div>
@@ -29,7 +30,7 @@ export interface Project {
   name: string;
   description: string;
   role: string;
-  models: { items: any[] }; // Ensure models is included
+  models: { items: { id: string; name: string }[] }; // Ensure models are defined
 }
 
 export interface StreamGridProps {
@@ -40,9 +41,9 @@ export interface StreamGridProps {
 
 const props = defineProps<StreamGridProps>();
 
+const emit = defineEmits(["project-selected"]);
+
 const selectProject = (project: Project) => {
   emit("project-selected", project);
 };
-
-const emit = defineEmits(["project-selected"]);
 </script>
