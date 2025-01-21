@@ -39,6 +39,35 @@
       <h2 class="text-xl font-semibold">
         Viewing Project: {{ selectedProject.name }}
       </h2>
+      <p class="text-gray-700">{{ selectedProject.description }}</p>
+      <p class="text-gray-500">Role: {{ selectedProject.role }}</p>
+
+      <!-- List of models -->
+      <div v-if="selectedProject.models.items.length > 0" class="mt-4">
+        <h3 class="text-lg font-medium text-gray-900">Available Models:</h3>
+        <ul class="mt-2 space-y-2">
+          <li
+            v-for="model in selectedProject.models.items"
+            :key="model.id"
+            class="p-4 bg-gray-100 rounded-lg"
+          >
+            <div class="flex justify-between items-center">
+              <div>
+                <p class="text-gray-800 font-medium">{{ model.name }}</p>
+                <p class="text-sm text-gray-500">ID: {{ model.id }}</p>
+              </div>
+              <button
+                @click="selectModel(model.id)"
+                class="bg-blue-500 hover:bg-blue-700 text-white text-sm font-semibold px-3 py-1 rounded"
+              >
+                View in Viewer
+              </button>
+            </div>
+          </li>
+        </ul>
+      </div>
+
+      <!-- Model selection dropdown and iframe -->
       <div class="mt-4">
         <label
           for="model-select"
@@ -95,129 +124,77 @@ const searchQuery = ref("");
 const store = useStore();
 const isAuthenticated = computed(() => store.isAuthenticated);
 
-// GraphQL query for projects
+// Reactive state for selected project and models
+const projects = ref<StreamGridItemProps[]>([]);
+const selectedProject = ref<StreamGridItemProps | null>(null);
+const selectedModelId = ref<string | null>(null);
+
+const speckleViewerUrl = computed(() => {
+  if (selectedModelId.value) {
+    return `https://speckle.xyz/embed?stream=${selectedModelId.value}`;
+  }
+  return null;
+});
+
+// Error message state
+const errorMessage = ref<string | null>(null);
+
+// Fetching projects data
 const { data, error, fetching } = useQuery({
   query: projectsQuery,
-  variables: {}, // Ensure no unsupported variables are passed
-  requestPolicy: "network-only", // Ensure fresh data is fetched
+  variables: {},
+  requestPolicy: "network-only",
   context: {
     fetchOptions: {
       headers: { Authorization: `Bearer ${store.authToken}` },
     },
   },
-  pause: !isAuthenticated.value, // Pause the query if not authenticated
+  pause: !isAuthenticated.value,
 });
 
-// Manage fetched projects and error messages
-const projects = ref<StreamGridItemProps[]>([]);
-const errorMessage = computed(() =>
-  error.value ? error.value.message : undefined
-);
-
-// Watch fetched data and process it
+// Watcher to process fetched projects data
 watchEffect(() => {
-  const items = data.value?.activeUser?.projects?.items;
-  if (items) {
-    console.log("Fetched projects data:", items); // Debugging
-    projects.value = items.map(
-      (project: {
-        id: string;
-        name: string;
-        description: string;
-        role: string;
-        models: { items: { id: string; name: string }[] }; // Ensure models are defined
-      }) => ({
-        id: project.id,
-        name: project.name,
-        description: project.description,
-        role: project.role,
-        models: project.models || { items: [] }, // Ensure models are defined
-      })
-    );
+  if (error.value) {
+    errorMessage.value = error.value.message;
+    return;
+  }
+
+  const projectData = data.value?.project;
+  if (projectData) {
+    projects.value = [
+      {
+        id: projectData.id,
+        name: projectData.name,
+        description: projectData.description,
+        role: projectData.role,
+        models: projectData.models || { items: [] },
+      },
+    ];
   }
 });
 
-// Filter projects based on search query
+// Filtered projects for search
 const filteredProjects = computed(() => {
-  if (!searchQuery.value) return [];
+  if (!searchQuery.value) return projects.value;
   return projects.value.filter((project) =>
     project.name.toLowerCase().includes(searchQuery.value.toLowerCase())
   );
 });
 
-// Define the type for the selected project
-interface SelectedProject extends StreamGridItemProps {
-  models: { items: { id: string; name: string }[] };
-}
-
-// Manage selected project and Speckle Viewer URL
-const selectedProject = ref<SelectedProject | null>(null);
-const selectedModelId = ref<string | null>(null);
-
-const speckleViewerUrl = computed(() => {
-  if (selectedModelId.value) {
-    return `https://app.speckle.systems/projects/${selectedProject.value?.id}/models/${selectedModelId.value}`;
-  }
-  return null;
-});
-
-// Handlers for project selection
+// Handle project selection
 const handleProjectSelected = async (project: StreamGridItemProps) => {
-  try {
-    console.log("Selected project:", project); // Debugging
-    selectedProject.value = { ...project, models: { items: [] } }; // Ensure models are initialized
-    if (project.id) {
-      console.log("Fetching models for selected project:", project.name);
-      const updatedProject = await fetchProjectModels(project.id);
-      console.log("Fetched models:", updatedProject.models); // Debugging
-      selectedProject.value.models = updatedProject.models || { items: [] };
-      if (
-        selectedProject.value.models.items &&
-        selectedProject.value.models.items.length > 0
-      ) {
-        selectedModelId.value = selectedProject.value.models.items[0].id; // Set the first model as default
-      }
-    }
-  } catch (error) {
-    console.error("Error in handleProjectSelected:", error);
+  selectedProject.value = project;
+  if (project.models.items.length > 0) {
+    selectedModelId.value = project.models.items[0].id; // Default to first model
   }
+};
+
+// Select a model
+const selectModel = (modelId: string) => {
+  selectedModelId.value = modelId;
 };
 
 const updateViewerUrl = () => {
-  // This function will be called when the model selection changes
-  console.log("Selected model ID:", selectedModelId.value);
+  console.log("Viewer URL updated for model:", selectedModelId.value);
 };
-
-async function fetchProjectModels(projectId: string) {
-  try {
-    const response = await fetch(
-      `https://app.speckle.systems/api/streams/${projectId}/objects`,
-      {
-        method: "GET",
-        headers: { Authorization: `Bearer ${store.authToken}` },
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(
-        `Error fetching models: ${response.statusText} - ${errorText}`
-      );
-    }
-
-    // Check if the response is JSON
-    const contentType = response.headers.get("Content-Type");
-    if (!contentType || !contentType.includes("application/json")) {
-      const text = await response.text(); // Read the response as text
-      console.error("Unexpected response:", text); // Log the unexpected response
-      throw new Error(`Unexpected content type: ${contentType}`);
-    }
-
-    const data = await response.json();
-    return data;
-  } catch (error) {
-    console.error("Error fetching models:", error);
-    return { models: [] }; // Fallback with an empty models list
-  }
-}
 </script>
