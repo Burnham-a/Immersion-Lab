@@ -21,6 +21,7 @@ import HelloWorld from "./components/HelloWorld.vue";
         <RouterLink to="/Step1">Step1</RouterLink>
         <RouterLink to="/Step2">Step2</RouterLink>
         <RouterLink to="/Step3">Step3</RouterLink>
+        <RouterLink to="/ImmersionLab">Immersion Lab</RouterLink>
       </nav>
     </div>
   </header>

@@ -1,17 +1,20 @@
 export const projectsQuery = `
-  query UserProject($projectId: String!){
-    project(id: $projectId) {
-          name
-          description
-          role
-          models {
-            items {
-              name
-              id
+query UserProjectsAndModels {
+  activeUser {
+    projects {
+      items {
+        id
+        name
+        models {
+          items {
+            id
+            name
+            versions {
+              totalCount
             }
           }
         }
       }
     }
   }
-`;
+}`;

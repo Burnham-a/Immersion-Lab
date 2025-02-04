@@ -1,7 +1,7 @@
 <template>
   <main class="max-w-3xl mx-auto py-10 px-4 sm:px-6 lg:px-8 text-center">
-    <h1 class="text-3xl font-bold leading-tight tracking-tight text-gray-900">
-      Step 3: Choose a Project
+    <h1 class="text-3xl font-bold leading-tight tracking-tight text-white-900">
+      Immersion Lab: Choose a Project
     </h1>
     <br />
     <div class="mt-4">
@@ -32,12 +32,14 @@
 
       <div v-else class="text-gray-500">No projects match your search.</div>
       <br />
+
       <div v-if="selectedProject" class="space-y-4">
         <h2 class="text-xl font-semibold">
           Viewing Project: {{ selectedProject.name }}
         </h2>
         <br />
-        <div v-if="selectedProject.models.items.length > 0">
+
+        <div v-if="selectedProject?.models?.items?.length > 0">
           <h3 class="text-lg font-medium">Available Models:</h3>
           <br />
           <ul class="space-y-2">
@@ -54,51 +56,20 @@
                   </p>
                 </div>
                 <button
-                  @click="selectModel(model.id)"
+                  @click="loadModel(model.id)"
                   class="bg-blue-500 hover:bg-blue-700 text-black text-sm font-semibold px-3 py-1 rounded"
                 >
-                  View in Viewer
+                  Load in Viewer
                 </button>
               </div>
             </li>
           </ul>
         </div>
 
-        <div>
-          <label
-            for="model-select"
-            class="block text-sm font-medium text-gray-700"
-          >
-            Select Model
-          </label>
-          <select
-            id="model-select"
-            v-model="selectedModelId"
-            @change="updateViewerUrl"
-            class="mt-1 w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
-          >
-            <option
-              v-for="model in selectedProject.models.items"
-              :key="model.id"
-              :value="model.id"
-            >
-              {{ model.name }}
-            </option>
-          </select>
-        </div>
-
-        <div>
-          <iframe
-            v-if="speckleViewerUrl"
-            title="Speckle"
-            :src="speckleViewerUrl"
-            width="100%"
-            height="400"
-            frameborder="0"
-            class="mx-auto rounded-lg"
-          ></iframe>
-          <p v-else class="text-gray-500">No models available to display.</p>
-        </div>
+        <div
+          ref="threeContainer"
+          class="w-full h-96 bg-gray-200 rounded-lg"
+        ></div>
       </div>
     </div>
 
@@ -111,30 +82,42 @@
 <script setup lang="ts">
 import StreamGrid from "@/components/StreamGrid.vue";
 import StreamSearchBar from "@/components/StreamSearchBar.vue";
-import type { StreamGridItemProps } from "@/types/StreamGridItemProps";
-import { projectsQuery } from "@/graphql/queries/streams";
 import { useQuery } from "@urql/vue";
-import { ref, computed, watchEffect } from "vue";
+import { projectsQuery } from "@/graphql/queries/streams";
+import { ref, computed, onMounted, onUnmounted, watchEffect } from "vue";
 import { useStore } from "@/stores/store";
+import * as THREE from "three";
+
+interface Model {
+  id: string;
+  name: string;
+  versions: {
+    totalCount: number;
+  };
+}
+
+interface Project {
+  id: string;
+  name: string;
+  description: string;
+  role: string;
+  models: {
+    items: Model[];
+  };
+}
 
 const store = useStore();
-const redirectToSpeckleAuthPage = () => {
-  store.redirectToSpeckleAuthPage();
-};
+const redirectToSpeckleAuthPage = () => store.redirectToSpeckleAuthPage();
 
-const searchQuery = ref("");
+const searchQuery = ref<string>("");
 const isAuthenticated = computed(() => store.isAuthenticated);
-const projects = ref<StreamGridItemProps[]>([]);
-const selectedProject = ref<StreamGridItemProps | null>(null);
-const selectedModelId = ref<string | null>(null);
-const speckleViewerUrl = computed(() => {
-  if (selectedProject.value && selectedModelId.value) {
-    return `https://app.speckle.systems/projects/${selectedProject.value.id}/models/${selectedModelId.value}/#embed=%7B%22isEnabled%22%3Atrue%7D`;
-  }
-  return null;
-});
+const projects = ref<Project[]>([]);
+const selectedProject = ref<Project | null>(null);
 const errorMessage = ref<string | null>(null);
-const { data, error, fetching } = useQuery({
+const threeContainer = ref<HTMLDivElement | null>(null);
+const fetching = ref<boolean>(false);
+
+const { data, error } = useQuery({
   query: projectsQuery,
   requestPolicy: "network-only",
   context: {
@@ -161,31 +144,83 @@ watchEffect(() => {
 });
 
 const filteredProjects = computed(() => {
-  if (!searchQuery.value) return projects.value;
   return projects.value.filter((project) =>
     project.name.toLowerCase().includes(searchQuery.value.toLowerCase())
   );
 });
 
-const handleProjectSelected = (project: StreamGridItemProps) => {
+const handleProjectSelected = (project: Project) => {
   selectedProject.value = project;
-  if (project.models.items.length > 0) {
-    selectedModelId.value = project.models.items[0].id;
-  }
 };
 
-const selectModel = (modelId: string) => {
-  selectedModelId.value = modelId;
+let scene: THREE.Scene;
+let camera: THREE.PerspectiveCamera;
+let renderer: THREE.WebGLRenderer;
+
+const initializeThreeJS = () => {
+  if (!threeContainer.value) return;
+
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(
+    75,
+    threeContainer.value.clientWidth / threeContainer.value.clientHeight,
+    0.1,
+    1000
+  );
+  camera.position.z = 5;
+
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(
+    threeContainer.value.clientWidth,
+    threeContainer.value.clientHeight
+  );
+  threeContainer.value.appendChild(renderer.domElement);
+
+  animate();
 };
 
-const updateViewerUrl = () => {
-  console.log("Viewer URL updated for model:", selectedModelId.value);
+const animate = () => {
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
 };
+
+const loadModel = async (modelId: string) => {
+  if (!selectedProject.value) return;
+
+  const response = await fetch(
+    `https://speckle.xyz/streams/${selectedProject.value.id}/objects/${modelId}`,
+    {
+      headers: { Authorization: `Bearer ${store.authToken}` },
+    }
+  );
+
+  const speckleData = await response.json();
+  addSpeckleObjectsToScene(speckleData);
+};
+
+const addSpeckleObjectsToScene = (data: any) => {
+  scene.clear();
+
+  data.objects.forEach((obj: any) => {
+    const geometry = new THREE.BoxGeometry(
+      obj.dimensions.x,
+      obj.dimensions.y,
+      obj.dimensions.z
+    );
+    const material = new THREE.MeshBasicMaterial({ color: 0x0077ff });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(obj.position.x, obj.position.y, obj.position.z);
+    scene.add(mesh);
+  });
+};
+
+onMounted(() => initializeThreeJS());
+onUnmounted(() => renderer.dispose());
 </script>
 
 <style scoped>
 main {
-  background-color: #00000000;
+  background-color: #f9fafb00;
   border-radius: 0.5rem;
   padding: 2rem;
 }

@@ -18,6 +18,7 @@ export const useStore = defineStore("store", {
   }),
   getters: {
     isAuthenticated(): boolean {
+      console.log("isAuthenticated:", this.user !== null);
       return this.user !== null;
     },
   },
@@ -95,17 +96,28 @@ export const useStore = defineStore("store", {
     async getUser() {
       try {
         const { data } = await SpeckleGraphQLClient.query(userInfoQuery, {});
-        this.user = data?.activeUser || null; // Use optional chaining and provide a default value
+        if (data?.activeUser) {
+          this.user = data.activeUser;
+          console.log("User successfully fetched:", this.user);
+        } else {
+          console.warn("No active user returned:", data);
+          this.user = null;
+        }
       } catch (error) {
         console.error("Error fetching user data:", error);
-        this.user = null; // Ensure user is set to null in case of error
+        this.user = null;
       }
     },
     async restoreSession() {
-      const token = localStorage.getItem(SPECKLE_AUTH_TOKEN_KEY);
-      if (token) {
-        this.authToken = token; // Restore authToken from localStorage
-        await this.getUser();
+      try {
+        const token = localStorage.getItem(SPECKLE_AUTH_TOKEN_KEY);
+        if (token) {
+          this.authToken = token; // Restore authToken
+          await this.getUser(); // Fetch user data
+        }
+      } catch (error) {
+        console.error("Error restoring session:", error);
+        this.clearAuthToken(); // Clear token on error
       }
     },
     setAuthToken(token: string) {

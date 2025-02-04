@@ -2,18 +2,22 @@
   <main>
     <h3>Step 2</h3>
     <br />
-    Move Up - W <br />
-    Move Down - S <br />
+    Move Forward - W <br />
+    Move Backward - S <br />
+    Move Up - E <br />
+    Move Down - Q <br />
     Move Left - A <br />
     Move Right - D <br />
     Orbit - Left Mouse Click <br />
+    Pan - Right Mouse Click <br />
+    Zoom - Mouse Wheel <br />
   </main>
   <br />
   <canvas ref="canvasRef" style="width: 1000px; height: auto"></canvas>
 </template>
 
 <script setup>
-import initializeScene from "@/views/script.js";
+import initializeScene from "@/components/3jsScript.js";
 import { onMounted, ref } from "vue";
 
 const canvasRef = ref(null); // Reference for the canvas element
