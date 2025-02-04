@@ -6,6 +6,7 @@ import {
 import HomeView from "../views/HomeView.vue";
 import { useStore } from "@/stores/store";
 import { authGuard } from "@/router/authGuards";
+import { authGuardIL } from "@/router/authGuards-IL";
 
 // Define the router
 const router = createRouter({
@@ -20,7 +21,7 @@ const router = createRouter({
       path: "/ImmersionLab",
       name: "ImmersionLab",
       component: () => import("@/views/ImmersionLab.vue"),
-      beforeEnter: authGuard,
+      beforeEnter: authGuardIL,
     },
     {
       path: "/Step1",

@@ -85,7 +85,7 @@ import StreamSearchBar from "@/components/StreamSearchBar.vue";
 import { useQuery } from "@urql/vue";
 import { projectsQuery } from "@/graphql/queries/streams";
 import { ref, computed, onMounted, onUnmounted, watchEffect } from "vue";
-import { useStore } from "@/stores/store";
+import { useStore } from "@/stores/store-IL";
 import * as THREE from "three";
 
 interface Model {
