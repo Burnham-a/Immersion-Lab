@@ -76,4 +76,14 @@ import SupportIcon from "./icons/IconSupport.vue";
     designing a sleek workflow to try and automate a process that can be used on
     multiple projects going forward
   </WelcomeItem>
+
+  <WelcomeItem>
+    <template #heading>Special Thanks</template>
+
+    • Will Franklin and Preston Pape, on initial discussions and their original
+    work on 3JS framework
+    <br />
+    • Daniel Boba and Victor Wanderley Barbosa for their expertise and
+    troubleshooting.
+  </WelcomeItem>
 </template>

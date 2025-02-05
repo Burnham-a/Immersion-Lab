@@ -19,4 +19,13 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
+  server: {
+    proxy: {
+      "/speckle": {
+        target: "https://speckle.xyz",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/speckle/, ""),
+      },
+    },
+  },
 });
