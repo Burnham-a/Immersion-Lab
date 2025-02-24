@@ -83,6 +83,20 @@
             </li>
           </ul>
         </div>
+        <!--Selected Models-->
+        <div v-if="selectedProject">
+          <h3 class="text-xl font-semibold text-white-600">Selected Models:</h3>
+          <p v-if="designOptions.Option1.length > 0">
+            Design Option 1: {{ selectedProject.name }}_{{
+              designOptions.Option1[0].name
+            }}
+          </p>
+          <p v-if="designOptions.Option2.length > 0">
+            Design Option 2: {{ selectedProject.name }}_{{
+              designOptions.Option2[0].name
+            }}
+          </p>
+        </div>
         <br />
         <div class="flex justify-center space-x-4 mt-6">
           <button
@@ -105,24 +119,22 @@
           </button>
         </div>
         <br />
-        <div
-          ref="viewerContainer"
-          class="w-full h-96 bg-gray-200 rounded-lg shadow-inner mt-4"
-          style="border: 2px solid orange"
-        ></div>
-        <br />
-        <div v-if="selectedProject">
-          <h3 class="text-xl font-semibold text-white-600">Selected Models:</h3>
-          <p v-if="designOptions.Option1.length > 0">
-            Design Option 1: {{ selectedProject.name }}_{{
-              designOptions.Option1[0].name
-            }}
-          </p>
-          <p v-if="designOptions.Option2.length > 0">
-            Design Option 2: {{ selectedProject.name }}_{{
-              designOptions.Option2[0].name
-            }}
-          </p>
+        <div class="w-200 h-200 flex flex-col space-y-4 mt-6">
+          <!-- Speckle Viewer Section -->
+          <div class="w-full h-full">
+            <h2 class="text-xl font-semibold text-white-800">Viewer</h2>
+            <div
+              ref="viewerContainer"
+              class="w-full h-full bg-gray-200 rounded-lg shadow-inner"
+              style="border: 2px solid orange"
+            ></div>
+          </div>
+          <br />
+          <!-- Google Map Section -->
+          <div class="w-full h-full">
+            <h2 class="text-xl font-semibold text-white-800">Map View</h2>
+            <GoogleMap ref="googleMap" />
+          </div>
         </div>
       </div>
     </div>
@@ -136,6 +148,7 @@
 import { ref, computed, watchEffect, nextTick, markRaw } from "vue";
 import StreamGrid from "@/components/StreamGrid.vue";
 import StreamSearchBar from "@/components/StreamSearchBar.vue";
+import GoogleMap from "@/components/GoogleMap.vue"; // Import the GoogleMap component
 import { useStore } from "@/stores/store-IL";
 import {
   Viewer,
@@ -166,6 +179,9 @@ const { data, error } = useQuery({
   },
   pause: !isAuthenticated.value,
 });
+
+// Define the reference to GoogleMap component
+const googleMap = ref(null);
 
 const filteredProjects = computed(() => {
   return (data.value?.activeUser?.projects?.items || []).filter((project) =>
@@ -202,6 +218,11 @@ const handleProjectSelected = (project) => {
   console.log("Project selected:", project);
   selectedProject.value = project;
   designOptions.value = { Option1: [], Option2: [] }; // Reset design options when a new project is selected
+
+  // Example: Assume your project contains lat/lng info
+  if (project.location) {
+    setMapPosition(project.location.lat, project.location.lng);
+  }
 };
 
 const viewDesignOption = (option) => {
@@ -246,6 +267,13 @@ const loadModels = async () => {
     } catch (err) {
       console.error(`Error loading model: ${model.name}`, err);
     }
+  }
+};
+
+const setMapPosition = (lat, lng) => {
+  // This function will pass lat/lng to the GoogleMap component
+  if (googleMap.value) {
+    googleMap.value.setMapPosition(lat, lng);
   }
 };
 
