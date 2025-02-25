@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { RouterLink, RouterView } from "vue-router";
+import { RouterLink, RouterView, useRoute } from "vue-router";
 import HelloWorld from "./components/HelloWorld.vue";
+
+// Access the current route
+const route = useRoute();
 </script>
 
 <template>
@@ -14,7 +17,11 @@ import HelloWorld from "./components/HelloWorld.vue";
     />
 
     <div class="wrapper">
-      <HelloWorld msg="The Immersion Lab" />
+      <!-- Conditionally render HelloWorld component -->
+      <HelloWorld
+        v-if="route.path !== '/ImmersionLab'"
+        msg="The Immersion Lab"
+      />
 
       <nav>
         <RouterLink to="/">Home</RouterLink>

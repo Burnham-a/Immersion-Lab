@@ -7,5 +7,9 @@
     {
       "path": "./tsconfig.app.json"
     }
+  ],
+  "include": [
+    "src/**/*", // Include all TypeScript files in the src directory
+    "types/**/*" // Include all TypeScript definition files (e.g., global.d.ts) in the types directory
   ]
 }

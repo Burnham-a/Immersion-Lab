@@ -1,5 +1,5 @@
 WIP
-Innovation Inncubator Github Page
+Innovation Incubator Github Page
 
 Split between 3 different Steps
 
