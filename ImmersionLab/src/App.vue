@@ -19,8 +19,8 @@ const route = useRoute();
     <div class="wrapper">
       <!-- Conditionally render HelloWorld component -->
       <HelloWorld
-        v-if="route.path !== '/ImmersionLab'"
-        msg="The Immersion Lab"
+        v-if="route.path !== '/StaffClient'"
+        msg="Immersion Lab App"
       />
 
       <nav>
@@ -28,7 +28,7 @@ const route = useRoute();
         <RouterLink to="/Step1">Step1</RouterLink>
         <RouterLink to="/Step2">Step2</RouterLink>
         <RouterLink to="/Step3">Step3</RouterLink>
-        <RouterLink to="/ImmersionLab">Immersion Lab</RouterLink>
+        <RouterLink to="/StaffClient">Immersion Lab App</RouterLink>
       </nav>
     </div>
   </header>

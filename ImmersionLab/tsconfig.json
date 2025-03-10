@@ -8,8 +8,17 @@
       "path": "./tsconfig.app.json"
     }
   ],
+  "compilerOptions": {
+    "composite": true, // Enable composite
+    "noEmit": true, // Ensure emit is not disabled
+    // other options
+    "baseUrl": "./src", // Set the base URL to the src folder
+    "paths": {
+      "@/*": ["*"] // Define an alias @ that points to src/ folder
+    }
+  },
   "include": [
     "src/**/*", // Include all TypeScript files in the src directory
-    "types/**/*" // Include all TypeScript definition files (e.g., global.d.ts) in the types directory
+    "types/**/*" // Include all TypeScript definition files in the types directory
   ]
 }

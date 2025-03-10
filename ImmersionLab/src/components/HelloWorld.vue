@@ -13,10 +13,10 @@ defineProps({
     <h3>The next evolution of your design</h3>
     <h3>
       <router-link
-        to="/ImmersionLab"
+        to="/StaffClient"
         class="inline-block bg-grey-500 text-white font-bold py-2 px-4 rounded-full shadow-lg transform transition-transform hover:scale-105 hover:shadow-xl"
       >
-        Immersion Lab
+        Immersion Lab App
       </router-link>
     </h3>
   </div>

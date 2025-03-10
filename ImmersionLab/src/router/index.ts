@@ -20,7 +20,7 @@ const router = createRouter({
     {
       path: "/ImmersionLab",
       name: "ImmersionLab",
-      component: () => import("@/views/ImmersionLab.vue"),
+      component: () => import("@/views/ImmersionLabSetup.vue"),
       beforeEnter: authGuardIL,
     },
     {
@@ -37,6 +37,18 @@ const router = createRouter({
       path: "/Step3",
       name: "Step3",
       component: () => import("@/views/Step3.vue"),
+      beforeEnter: authGuard,
+    },
+    {
+      path: "/StaffClient",
+      name: "StaffClient",
+      component: () => import("@/views/StaffClient.vue"),
+      beforeEnter: authGuard,
+    },
+    {
+      path: "/ClientApp",
+      name: "ClientApp",
+      component: () => import("@/views/ClientApp.vue"),
       beforeEnter: authGuard,
     },
   ],

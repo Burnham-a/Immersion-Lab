@@ -13,7 +13,7 @@
   "dependencies": {
     "@googlemaps/js-api-loader": "^1.16.8",
     "@heroicons/vue": "^2.2.0",
-    "@speckle/viewer": "^2.23.5",
+    "@speckle/viewer": "^2.23.10",
     "@tailwindcss/postcss": "^4.0.0",
     "@tailwindcss/vite": "^4.0.0",
     "@urql/vue": "^1.4.2",
