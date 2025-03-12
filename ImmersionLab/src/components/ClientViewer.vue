@@ -23,134 +23,186 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from "vue";
+import { ref, watchEffect, onBeforeUnmount, markRaw, nextTick } from "vue";
+import { useStore } from "@/stores/store-IL";
 import {
   Viewer,
   DefaultViewerParams,
   SpeckleLoader,
+  CameraController,
+  SelectionExtension,
   UrlHelper,
-  WorldTree,
 } from "@speckle/viewer";
+import * as THREE from "three";
 
-const props = defineProps({
-  projectData: {
-    type: Object,
-    required: true,
-  },
-});
+// Store initialization
+const store = useStore();
 
+// Reactive variables
 const viewerContainer = ref(null);
 const viewer = ref(null);
+const viewerInitialized = ref(false);
+const selectedProject = ref(null);
+const viewerBackgroundColor = ref("#ffffff");
+
+// Track the currently selected design option
 const currentOption = ref("Option1");
 
-// Load models based on selected design option
-const loadModels = async (option) => {
-  if (!viewer.value) return;
-
-  try {
-    // Ensure viewer is initialized and supports the methods you're calling
-    if (typeof viewer.value.setWorldTree === "function") {
-      // Clear existing models
-      const worldTree = new WorldTree();
-      viewer.value.setWorldTree(worldTree);
-    } else {
-      console.warn("Viewer does not support setWorldTree method.");
-    }
-
-    // Determine which models to load based on selected option
-    let modelsToLoad = [];
-    if (option === "Both") {
-      modelsToLoad = [
-        ...props.projectData.designOptions.Option1,
-        ...props.projectData.designOptions.Option2,
-      ];
-    } else {
-      modelsToLoad = props.projectData.designOptions[option];
-    }
-
-    for (const model of modelsToLoad) {
-      try {
-        const urls = await UrlHelper.getResourceUrls(
-          `https://app.speckle.systems/projects/${props.projectData.projectId}/models/${model.id}`
-        );
-
-        for (const url of urls) {
-          const loader = new SpeckleLoader(
-            viewer.value.worldTree, // assuming worldTree is available after viewer initialization
-            url,
-            props.projectData.authToken
-          );
-          await viewer.value.loadObject(loader, true);
-          console.log(`Model ${model.name} loaded successfully`);
-        }
-      } catch (err) {
-        console.error(`Error loading model ${model.name}:`, err);
-      }
-    }
-  } catch (error) {
-    console.error("Error loading models:", error);
-  }
-};
-
-// Switch the design option and reload models
-const switchDesignOption = async (option) => {
+// Function to switch between design options
+const switchDesignOption = (option) => {
+  console.log("🔄 Switching to design option:", option);
   currentOption.value = option;
-  await loadModels(option);
-};
 
-// Initialize the viewer with provided settings and models
-const initViewer = async () => {
-  if (!viewerContainer.value) return;
-
-  try {
-    const backgroundColor =
-      props.projectData.viewerSettings?.backgroundColor || "#ffffff"; // Default to white
-
-    viewer.value = new Viewer(viewerContainer.value, {
-      ...DefaultViewerParams,
-      backgroundColor,
-      verbose: true,
-    });
-
-    await viewer.value.init(); // Initialize viewer
-
-    // Proceed to load models after viewer initialization
-    await loadModels(currentOption.value);
-  } catch (error) {
-    console.error("Error initializing viewer:", error);
-    throw error;
+  if (!selectedProject.value) {
+    console.warn("⚠️ No project selected! Skipping model loading.");
+    return;
   }
+
+  console.log("📌 Current project details:", selectedProject.value);
+  loadModels();
 };
 
-onMounted(async () => {
-  await initViewer();
+// Cleanup before unmounting
+onBeforeUnmount(() => {
+  disposeViewer();
 });
 
-onBeforeUnmount(() => {
-  if (viewer.value && typeof viewer.value.dispose === "function") {
-    viewer.value.dispose();
+// Dispose viewer properly
+const disposeViewer = async () => {
+  if (viewer.value) {
+    try {
+      console.log("🗑️ Disposing viewer...");
+      await viewer.value.dispose();
+      viewer.value = null;
+      viewerInitialized.value = false;
+    } catch (err) {
+      console.error("❌ Error disposing viewer:", err);
+    }
+  }
+};
+
+// Initialize Viewer
+const initViewer = async () => {
+  if (!viewerContainer.value || viewerInitialized.value) return;
+
+  try {
+    await disposeViewer();
+    await nextTick(); // Ensure DOM updates
+
+    console.log("🎥 Initializing viewer...");
+
+    const viewerInstance = new Viewer(viewerContainer.value, {
+      ...DefaultViewerParams,
+      backgroundColor: new THREE.Color(viewerBackgroundColor.value),
+    });
+
+    await viewerInstance.init();
+    viewer.value = markRaw(viewerInstance);
+    viewer.value.createExtension(CameraController);
+    viewer.value.createExtension(SelectionExtension);
+
+    // viewerContainer.value.addEventListener("touchstart", () => {}, {
+    //   passive: true,
+    // });
+    // viewerContainer.value.addEventListener("wheel", () => {}, {
+    //   passive: true,
+    // });
+
+    viewerInitialized.value = true;
+    console.log("✅ Viewer initialized successfully.");
+  } catch (error) {
+    console.error("❌ Error initializing viewer:", error.message, error.stack);
+
+    viewerInitialized.value = false;
+  }
+};
+
+// Load Model into Viewer
+const loadModels = async () => {
+  if (!selectedProject.value || !viewer.value) {
+    console.warn("⚠️ No selected project or viewer not initialized.");
+    return;
+  }
+
+  viewer.value.unloadAll();
+  console.log("🗑️ Unloading previous models...");
+
+  if (!selectedProject.value || !selectedProject.value.modelId) {
+    console.error("❌ No valid model or project found.");
+    return;
+  }
+
+  try {
+    const modelId = selectedProject.value.modelId;
+
+    if (!modelId) {
+      console.error("❌ No valid model ID found.");
+      return;
+    }
+
+    const modelUrl = `https://app.speckle.systems/projects/${selectedProject.value.id}/models/${modelId}`;
+    console.log("🌍 Fetching Speckle model from:", modelUrl);
+
+    let urls = [];
+    try {
+      urls = await UrlHelper.getResourceUrls(modelUrl);
+      if (!urls || urls.length === 0) {
+        throw new Error("No valid model URLs found.");
+      }
+    } catch (err) {
+      console.error("❌ Error fetching model URLs:", err.message);
+      return;
+    }
+
+    for (const url of urls) {
+      console.log(`📦 Loading model from: ${url}`);
+      const loader = new SpeckleLoader(
+        viewer.value.getWorldTree(),
+        url,
+        store.authToken
+      );
+
+      await viewer.value.loadObject(loader, true);
+      console.log(`✅ Successfully loaded model: ${modelId}`);
+    }
+  } catch (error) {
+    console.error("❌ Error loading models:", error);
+  }
+};
+
+// Watch for authentication & viewer initialization
+watchEffect(() => {
+  if (
+    viewerContainer.value &&
+    !viewerInitialized.value &&
+    store.isAuthenticated
+  ) {
+    initViewer();
+  }
+});
+
+// Watch for project selection & load model
+watchEffect(() => {
+  console.log("🔍 Watching for project selection...");
+
+  if (!store.selectedProject) {
+    console.warn("⚠️ No project selected in store.");
+  } else {
+    console.log("✅ Project detected:", store.selectedProject);
+    selectedProject.value = store.selectedProject; // Ensures reactivity
+    loadModels();
   }
 });
 </script>
 
 <style scoped>
-.client-viewer {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.design-options-controls {
-  display: flex;
-  justify-content: center;
-  gap: 0.5rem;
-}
-
 .viewer-container {
   width: 100%;
   height: 500px;
-  background-color: #f0f0f0;
   border: 1px solid #ccc;
-  border-radius: 0.5rem;
+}
+
+.error {
+  color: red;
 }
 </style>

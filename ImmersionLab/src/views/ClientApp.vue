@@ -22,17 +22,26 @@
 <script setup>
 import { ref } from "vue";
 import ClientViewer from "@/components/ClientViewer.vue";
+import { useStore } from "@/stores/store-IL"; // Import the store
 
+// Define reactive variables
 const projectNumber = ref("");
 const errorMessage = ref(null);
 const projectData = ref(null);
 
+// Access the store
+const store = useStore();
+
+// Define goToProjectViewer function
 const goToProjectViewer = async () => {
-  if (projectNumber.value) {
-    const storedData = localStorage.getItem(projectNumber.value);
+  const trimmedNumber = projectNumber.value.trim();
+  if (trimmedNumber) {
+    const storedData = localStorage.getItem(trimmedNumber);
     if (storedData) {
       try {
+        console.log("Raw project data from localStorage:", storedData);
         projectData.value = JSON.parse(storedData);
+        store.selectedProject = projectData.value; // Save the project data to the store
         errorMessage.value = null;
       } catch (error) {
         errorMessage.value = "Invalid project data format";

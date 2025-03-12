@@ -160,6 +160,7 @@
           <div class="w-full h-full">
             <h2 class="text-xl font-semibold text-gray-800">Map View</h2>
             <div class="flex-1">
+              <br />
               <!-- Google map component -->
               <GoogleMap ref="googleMap" />
             </div>
@@ -172,7 +173,7 @@
       Please authenticate first to access projects.
     </div>
     <div>
-      <h1 class="text-3xl font-bold mb-6">Staff: Add Model and Save Project</h1>
+      <h1 class="text-3xl font-bold mb-6">Save Project</h1>
 
       <!-- Project Number Generator & Copy to Clipboard Feature -->
       <div class="mt-6 flex flex-col items-center">
@@ -199,6 +200,7 @@
             <span v-else>Copied!</span>
           </button>
         </div>
+        <br />
         <button
           @click="saveProject"
           :disabled="!projectNumber"
