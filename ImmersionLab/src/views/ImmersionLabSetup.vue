@@ -266,6 +266,9 @@
 </template>
 
 <script setup lang="ts">
+console.log("Initializing ImmersionLabSetup.vue...");
+
+// Verify imports
 import {
   ref,
   computed,
@@ -274,11 +277,19 @@ import {
   onMounted,
   nextTick,
 } from "vue";
+console.log("Vue imports loaded successfully.");
+
 import { useRoute, useRouter } from "vue-router";
+console.log("Vue Router imports loaded successfully.");
+
 import StreamGrid from "@/components/StreamGrid.vue";
 import StreamSearchBar from "@/components/StreamSearchBar.vue";
 import GoogleMap from "@/components/GoogleMap.vue";
-import { useImmersionLabStore } from "@/stores/store-IL"; // Updated import
+console.log("Component imports loaded successfully.");
+
+import { useImmersionLabStore } from "@/stores/store-IL";
+console.log("Store import loaded successfully.");
+
 import {
   Viewer,
   DefaultViewerParams,
@@ -286,11 +297,20 @@ import {
   CameraController,
   SelectionExtension,
   UrlHelper,
+  IViewer,
 } from "@speckle/viewer";
+console.log("Speckle Viewer imports loaded successfully.");
+
 import { useQuery } from "@urql/vue";
 import { projectsQuery } from "@/graphql/queries/streams";
+console.log("GraphQL and URQL imports loaded successfully.");
+
 import * as THREE from "three";
+console.log("THREE.js imports loaded successfully.");
+
 import { saveProjectToLocalStorage } from "@/utils/projectUtils";
+console.log("Utility imports loaded successfully.");
+
 import { StreamGridItemProps } from "@/types/StreamGridItemProps";
 
 const store = useImmersionLabStore(); // Updated store usage
@@ -449,18 +469,18 @@ const filteredProjects = computed(() => {
   console.log("All projects:", projects.value.length);
 
   if (!searchQuery.value || searchQuery.value.trim() === "") {
-    return projects.value;
+    return projects.value; // Return all projects if no search query
   }
 
   const query = searchQuery.value.toLowerCase().trim();
 
   const filtered = projects.value.filter((project) => {
-    // Check project name first
+    // Check project name
     if (project.name && project.name.toLowerCase().includes(query)) {
       return true;
     }
 
-    // Then check models if available
+    // Check models if available
     if (project.models?.items?.length > 0) {
       return project.models.items.some(
         (model) => model.name && model.name.toLowerCase().includes(query)
@@ -626,15 +646,20 @@ const handleAuthClick = () => {
   }
 };
 
-const handleLogout = () => {
-  console.log("Logging out user");
+const handleLogout = async () => {
+  console.log("Logging out user...");
   try {
-    store.speckle.logout();
-    console.log("Logout successful");
+    // Clear authentication state in the store
+    store.speckle.token = null;
+    store.isAuthenticated = false;
+
+    // Clear user and project data
     selectedProject.value = null;
     projects.value = [];
+    console.log("Logout successful");
   } catch (err) {
     console.error("Logout error:", err);
+    errorMessage.value = "Failed to log out. Please try again.";
   }
 };
 
@@ -651,9 +676,12 @@ const initializeViewer = async () => {
 
     console.log("Viewer container element:", containerElement);
 
-    if (!containerElement) {
+    // Ensure containerElement is a valid HTMLElement
+    if (!(containerElement instanceof HTMLElement)) {
       errorMessage.value =
-        "Viewer container not found. Please refresh the page.";
+        "Viewer container is not a valid DOM element. Please refresh the page.";
+      console.error("Invalid container element:", containerElement);
+      console.log("Type of containerElement:", typeof containerElement);
       return;
     }
 
@@ -664,16 +692,19 @@ const initializeViewer = async () => {
 
     // Create the viewer with proper configuration object
     viewer.value = new Viewer({
-      container: containerElement,
+      container: containerElement, // Pass the validated HTMLElement
       showStats: false,
       environmentSettings: {
         enable: false,
       },
     });
 
+    console.log("Viewer instance created:", viewer.value);
+
     // Configure viewer after creation
-    if (viewer.value && viewer.value.renderer) {
-      viewer.value.renderer.setClearColor(
+    if (viewer.value?.speckleRenderer?.viewer) {
+      const renderer = viewer.value.speckleRenderer.viewer;
+      renderer.renderer.setClearColor(
         new THREE.Color(viewerBackgroundColor.value)
       );
     }
@@ -682,10 +713,11 @@ const initializeViewer = async () => {
     setTimeout(() => {
       if (viewer.value) {
         try {
-          new CameraController(viewer.value);
+          const viewerForExtensions = viewer.value as unknown as IViewer;
+          new CameraController(viewerForExtensions);
           new SelectionExtension(
-            viewer.value,
-            new CameraController(viewer.value)
+            viewerForExtensions,
+            new CameraController(viewerForExtensions)
           );
           console.log("Viewer extensions added successfully");
         } catch (extErr) {
@@ -704,17 +736,18 @@ const initializeViewer = async () => {
   }
 };
 
-// Update watchEffect for background color changes with better error handling
+// Update watchEffect for background color changes
 watchEffect(() => {
   if (viewer.value && viewerInitialized.value) {
     try {
-      // Update the viewer background color when it changes
-      viewer.value.renderer.setClearColor(
-        new THREE.Color(viewerBackgroundColor.value)
-      );
+      if (viewer.value.speckleRenderer?.viewer) {
+        const renderer = viewer.value.speckleRenderer.viewer;
+        renderer.renderer.setClearColor(
+          new THREE.Color(viewerBackgroundColor.value)
+        ); // Corrected property path
+      }
     } catch (colorErr) {
       console.error("Error updating viewer background color:", colorErr);
-      // Don't set errorMessage here to avoid disrupting the UI for a non-critical error
     }
   }
 });
@@ -727,7 +760,7 @@ const saveProject = () => {
         projectNumber: projectNumber.value,
         projectName: selectedProject.value?.name || "",
         designOptions: designOptions.value,
-        // Add any other project details you want to save
+        projectData: { models: selectedProject.value?.models || [] }, // Added missing argument
       });
 
       projectSaved.value = true;
