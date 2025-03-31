@@ -43,14 +43,14 @@
           <ul class="space-y-2">
             <li
               v-for="model in selectedProject.models.items"
-              :key="model.id"
+              :key="model.name"
               class="p-4 bg-gray-100 rounded-lg"
             >
               <div class="flex justify-between items-center">
                 <div>
                   <p class="text-gray-800 font-medium">{{ model.name }}</p>
                   <p class="text-sm text-gray-500">
-                    Versions: {{ model.versions.totalCount }}
+                    Versions: {{ model.versions?.totalCount ?? "N/A" }}
                   </p>
                 </div>
                 <button
@@ -114,17 +114,44 @@ import StreamSearchBar from "@/components/StreamSearchBar.vue";
 import type { StreamGridItemProps } from "@/types/StreamGridItemProps";
 import { projectsQuery } from "@/graphql/queries/streams";
 import { useQuery } from "@urql/vue";
-import { ref, computed, watchEffect } from "vue";
-import { useStore } from "@/stores/store";
+import { ref, computed, watchEffect, onMounted } from "vue";
+import { useRouter } from "vue-router";
+import { useAuthStore } from "@/stores/store";
 
-const store = useStore();
-const redirectToSpeckleAuthPage = () => {
-  store.redirectToSpeckleAuthPage();
-};
+const store = useAuthStore();
+const router = useRouter();
+
+onMounted(async () => {
+  try {
+    const user = await store.speckle.user();
+    if (!user) {
+      console.warn("User not authenticated, redirecting...");
+      await router.push({ name: "Step3", query: { access_code: null } });
+    } else {
+      store.user = user;
+      store.isAuthenticated = true;
+    }
+  } catch (error) {
+    console.error("Error during authentication check:", error);
+  }
+});
 
 const searchQuery = ref("");
 const isAuthenticated = computed(() => store.isAuthenticated);
-const projects = ref<StreamGridItemProps[]>([]);
+const projects = ref<
+  Array<
+    StreamGridItemProps & {
+      models: {
+        items: Array<{
+          name: string;
+          id: string; // Ensure 'id' is included
+          option?: string;
+          versions?: { totalCount?: number } | undefined;
+        }>;
+      };
+    }
+  >
+>([]);
 const selectedProject = ref<StreamGridItemProps | null>(null);
 const selectedModelId = ref<string | null>(null);
 const speckleViewerUrl = computed(() => {
@@ -139,7 +166,7 @@ const { data, error, fetching } = useQuery({
   requestPolicy: "network-only",
   context: {
     fetchOptions: {
-      headers: { Authorization: `Bearer ${store.authToken}` },
+      headers: { Authorization: `Bearer ${store.speckle.token}` },
     },
   },
   pause: !isAuthenticated.value,
@@ -155,7 +182,7 @@ watchEffect(() => {
     id: project.id,
     name: project.name,
     description: project.description,
-    role: project.role,
+    role: project.role || "", // Provide a default empty string for undefined roles
     models: project.models || { items: [] },
   }));
 });
@@ -170,7 +197,7 @@ const filteredProjects = computed(() => {
 const handleProjectSelected = (project: StreamGridItemProps) => {
   selectedProject.value = project;
   if (project.models.items.length > 0) {
-    selectedModelId.value = project.models.items[0].id;
+    selectedModelId.value = project.models.items[0].id || null;
   }
 };
 
@@ -180,6 +207,11 @@ const selectModel = (modelId: string) => {
 
 const updateViewerUrl = () => {
   console.log("Viewer URL updated for model:", selectedModelId.value);
+};
+
+const redirectToSpeckleAuthPage = () => {
+  const speckleAuthUrl = "https://speckle.systems/auth"; // Replace with actual URL
+  window.location.href = speckleAuthUrl;
 };
 </script>
 

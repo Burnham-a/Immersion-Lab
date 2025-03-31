@@ -39,11 +39,11 @@ const loadGoogleMaps = () => {
 
     const script = document.createElement("script");
     script.src =
-      "https://maps.googleapis.com/maps/api/js?key=AIzaSyBLE0x7t1tAmWX_1nrutnlYEThk8QFEmoc&libraries=places,drawing&callback=initMap";
+      "https://maps.googleapis.com/maps/api/js?key=AIzaSyBLE0x7t1tAmWX_1nrutnlYEThk8QFEmoc&libraries=places,drawing";
     script.async = true;
     script.defer = true;
-    script.onload = resolve;
-    script.onerror = reject;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load Google Maps API"));
     document.head.appendChild(script);
   });
 };

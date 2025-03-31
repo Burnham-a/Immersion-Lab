@@ -11,8 +11,17 @@
   "compilerOptions": {
     "composite": true, // Enable composite
     "noEmit": true, // Ensure emit is not disabled
-    // other options
-    "baseUrl": "./src", // Set the base URL to the src folder
+    "target": "es2017",
+    "lib": ["es2017", "dom"],
+    "module": "esnext",
+    "strict": true,
+    "esModuleInterop": true,
+    "allowJs": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "node",
+    "types": ["vite/client", "vue"],
+    "baseUrl": "./src",
     "paths": {
       "@/*": ["*"] // Define an alias @ that points to src/ folder
     }

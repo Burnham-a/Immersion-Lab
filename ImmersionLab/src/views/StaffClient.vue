@@ -25,17 +25,17 @@
 
 <script setup>
 import { useRouter } from "vue-router";
+import { useImmersionLabStore } from "@/stores/store-IL";
 
 const router = useRouter();
+const store = useImmersionLabStore();
 
-// Go to the staff home page (current home page)
 const goToStaffHome = () => {
-  router.push({ name: "ImmersionLab" }); // Assuming 'StaffHome' is the name of your existing home route for staff
+  router.push({ name: "ImmersionLab" });
 };
 
-// Go to the client page, where the project number will be entered
 const goToClientApp = () => {
-  router.push({ name: "ClientApp" }); // Assuming 'ClientHome' will be your new page for clients
+  router.push({ name: "ClientApp" });
 };
 </script>
 

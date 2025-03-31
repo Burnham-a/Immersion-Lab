@@ -1,132 +1,46 @@
+// store-IL.ts (ImmersionLab Authentication Store)
 import { defineStore } from "pinia";
-import { SpeckleGraphQLClient } from "@/graphql/client.ts";
-import { userInfoQuery } from "@/graphql/queries/user-info";
+import {
+  SpeckleAuthClient,
+  type ApplicationOptions,
+  type User,
+} from "speckle-auth";
+import { ref } from "vue";
 
-export const SPECKLE_CHALLENGE_KEY = "SpeckleDemoApp.Challenge";
-export const SPECKLE_AUTH_TOKEN_KEY = "SpeckleDemoApp.AuthToken";
-export const SPECKLE_AUTH_REFRESH_TOKEN_KEY = "SpeckleDemoApp.AuthRefreshToken";
+export const SPECKLE_AUTH_TOKEN_KEY = "speckle_auth_token";
 
-interface State {
-  user: any | null;
-  authToken: string | null; // Add authToken to the state
-}
+export const useAuthStore = defineStore("immersionLab", () => {
+  const isAuthenticated = ref(false);
+  const user = ref<User | null>(null);
 
-export const useStore = defineStore("store", {
-  state: (): State => ({
-    user: null,
-    authToken: localStorage.getItem(SPECKLE_AUTH_TOKEN_KEY), // Initialize authToken from localStorage
-  }),
-  getters: {
-    isAuthenticated(): boolean {
-      console.log("isAuthenticated:", this.user !== null);
-      return this.user !== null;
-    },
-  },
-  actions: {
-    redirectToSpeckleAuthPage() {
-      const speckleServer = import.meta.env.VITE_SPECKLE_SERVER;
-      const appId = import.meta.env.VITE_SPECKLE_APP_ID;
+  const options: ApplicationOptions = {
+    clientId: import.meta.env.VITE_SPECKLE_CLIENT_ID,
+    clientSecret: import.meta.env.VITE_SPECKLE_CLIENT_SECRET,
+    serverUrl: import.meta.env.VITE_SPECKLE_SERVER_URL,
+  };
 
-      if (!speckleServer || !appId) {
-        console.error(
-          "Environment variables VITE_SPECKLE_SERVER or VITE_SPECKLE_APP_ID are missing."
-        );
-        alert(
-          "Authentication is not configured correctly. Please contact support."
-        );
-        return;
+  const speckle = new SpeckleAuthClient(options);
+
+  const login = async () => {
+    try {
+      // Call login without passing any arguments
+      await speckle.login();
+    } catch (error) {
+      console.error("Error during login:", error);
+    }
+  };
+
+  const initializeUser = async () => {
+    try {
+      // Fetch user data when explicitly called
+      user.value = await speckle.user();
+      if (user.value) {
+        isAuthenticated.value = true; // Set authentication status
       }
+    } catch (error) {
+      console.error("Error during initialization:", error);
+    }
+  };
 
-      // Generate a random challenge
-      const challenge =
-        Math.random().toString(36).substring(2, 15) +
-        Math.random().toString(36).substring(2, 15);
-
-      // Store the challenge in localStorage
-      localStorage.setItem(SPECKLE_CHALLENGE_KEY, challenge);
-
-      // Redirect to the Speckle Server auth page
-      window.location.href = `${speckleServer}/authn/verify/${appId}/${challenge}`;
-    },
-    async exchangeAccessCode(accessCode: string) {
-      try {
-        const res = await fetch(
-          `${import.meta.env.VITE_SPECKLE_SERVER}/auth/token/`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              accessCode: accessCode,
-              appId: import.meta.env.VITE_SPECKLE_APP_ID,
-              appSecret: import.meta.env.VITE_SPECKLE_APP_SECRET,
-              challenge: localStorage.getItem(SPECKLE_CHALLENGE_KEY),
-            }),
-          }
-        );
-
-        if (!res.ok) {
-          console.error("Failed to exchange access code:", res.statusText);
-          throw new Error(`HTTP error! status: ${res.status}`);
-        }
-
-        const data = await res.json();
-
-        if (data.token) {
-          // If retrieving the token was successful, remove challenge and set the new token and refresh token
-          localStorage.removeItem(SPECKLE_CHALLENGE_KEY);
-          localStorage.setItem(SPECKLE_AUTH_TOKEN_KEY, data.token);
-          localStorage.setItem(
-            SPECKLE_AUTH_REFRESH_TOKEN_KEY,
-            data.refreshToken
-          );
-          this.authToken = data.token; // Update authToken in the state
-        } else {
-          console.error("Token missing in response:", data);
-          throw new Error("Authentication token is missing in the response.");
-        }
-
-        return data;
-      } catch (error) {
-        console.error("Error during token exchange:", error);
-        throw error; // Rethrow the error for further handling in the calling code
-      }
-    },
-    async getUser() {
-      try {
-        const { data } = await SpeckleGraphQLClient.query(userInfoQuery, {});
-        if (data?.activeUser) {
-          this.user = data.activeUser;
-          console.log("User successfully fetched:", this.user);
-        } else {
-          console.warn("No active user returned:", data);
-          this.user = null;
-        }
-      } catch (error) {
-        console.error("Error fetching user data:", error);
-        this.user = null;
-      }
-    },
-    async restoreSession() {
-      try {
-        const token = localStorage.getItem(SPECKLE_AUTH_TOKEN_KEY);
-        if (token) {
-          this.authToken = token; // Restore authToken
-          await this.getUser(); // Fetch user data
-        }
-      } catch (error) {
-        console.error("Error restoring session:", error);
-        this.clearAuthToken(); // Clear token on error
-      }
-    },
-    setAuthToken(token: string) {
-      this.authToken = token;
-      localStorage.setItem(SPECKLE_AUTH_TOKEN_KEY, token);
-    },
-    clearAuthToken() {
-      this.authToken = null;
-      localStorage.removeItem(SPECKLE_AUTH_TOKEN_KEY);
-    },
-  },
+  return { isAuthenticated, user, speckle, login, initializeUser };
 });

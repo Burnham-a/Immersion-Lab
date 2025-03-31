@@ -4,9 +4,9 @@ import {
   type NavigationGuard,
 } from "vue-router";
 import HomeView from "../views/HomeView.vue";
-import { useStore } from "@/stores/store";
-import { authGuard } from "@/router/authGuards";
-import { authGuardIL } from "@/router/authGuards-IL";
+import { authGuard } from "@/router/authGuards.ts";
+import { authGuardIL } from "@/router/authGuards-IL.ts";
+import LoginPage from "@/views/LoginPage.vue"; // Ensure this path points to your Login page component
 
 // Define the router
 const router = createRouter({
@@ -20,8 +20,8 @@ const router = createRouter({
     {
       path: "/ImmersionLab",
       name: "ImmersionLab",
-      component: () => import("@/views/ImmersionLabSetup.vue"),
-      beforeEnter: authGuardIL,
+      component: () => import("../views/ImmersionLabSetup.vue"),
+      beforeEnter: authGuardIL, // Ensure authGuardIL is used
     },
     {
       path: "/Step1",
@@ -43,13 +43,12 @@ const router = createRouter({
       path: "/StaffClient",
       name: "StaffClient",
       component: () => import("@/views/StaffClient.vue"),
-      beforeEnter: authGuard,
     },
     {
       path: "/ClientApp",
       name: "ClientApp",
       component: () => import("@/views/ClientApp.vue"),
-      beforeEnter: authGuard,
+      beforeEnter: authGuardIL,
     },
   ],
 });

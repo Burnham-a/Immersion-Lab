@@ -1,39 +1,22 @@
-import { useStore } from "@/stores/store";
+// authGuards.ts (Step3 Authentication Guard)
+import { useAuthStore } from "@/stores/store";
 import type { NavigationGuard } from "vue-router";
 
 export const authGuard: NavigationGuard = async (to, from, next) => {
-  const store = useStore();
-
-  console.log("Entering authGuard for route:", to.name);
-
+  const store = useAuthStore();
   try {
-    // Handle access code from query params
-    if (to.query.access_code) {
-      console.log("authGuard: Found access code:", to.query.access_code);
-
-      // Exchange the access code and fetch the user
-      await store.exchangeAccessCode(to.query.access_code as string);
-      await store.getUser();
-      console.log("authGuard: Authentication successful");
-
-      // Redirect to the intended route instead of home
-      next({ path: to.path, query: {} });
-      return;
-    }
-
-    // Restore session and validate authentication
-    console.log("authGuard: Restoring session...");
-    await store.restoreSession();
-
-    if (store.isAuthenticated) {
-      console.log("authGuard: User is authenticated");
-      next(); // Allow access to the target route
+    const user = await store.speckle.user();
+    if (user) {
+      store.user = user;
+      store.isAuthenticated = true;
+      next();
     } else {
-      console.warn("authGuard: User is not authenticated, redirecting to home");
-      next({ path: "/", query: { redirect: to.fullPath } }); // Store intended destination
+      console.warn("User not authenticated. Redirecting to Step3...");
+      await store.speckle.login();
+      next();
     }
   } catch (error) {
-    console.error("authGuard: Error during guard execution", error);
-    next("/"); // Redirect to home on error
+    console.error("Error during authentication:", error);
+    next(false); // Abort navigation on error
   }
 };

@@ -10,7 +10,7 @@
     <!-- Authenticate button to start the Speckle authentication process -->
     <div class="mt-4">
       <button
-        @click="redirectToSpeckleAuthPage"
+        @click="handleAuthClick"
         class="bg-blue-600 hover:bg-blue-800 text-white font-semibold py-3 px-6 rounded-lg shadow-md transition duration-300"
       >
         Authenticate with Speckle
@@ -19,16 +19,59 @@
     <br />
     <!-- Only show the following section if the user is authenticated -->
     <div v-if="isAuthenticated" class="mt-10 space-y-8">
+      <div
+        v-if="user"
+        class="flex items-center justify-between p-4 bg-gray-100 rounded-lg"
+      >
+        <div class="flex items-center gap-4">
+          <img
+            :src="user.avatar"
+            alt="avatar"
+            width="50"
+            height="50"
+            class="rounded-full"
+          />
+          <div class="text-left">
+            <div class="font-semibold">{{ user.name }}</div>
+          </div>
+        </div>
+        <button
+          @click="handleLogout"
+          class="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition duration-300"
+        >
+          Logout
+        </button>
+      </div>
       <!-- Search bar for filtering projects -->
-      <StreamSearchBar v-model="searchQuery" class="w-full" />
+      <div>
+        <StreamSearchBar v-model="searchQuery" class="w-full" />
+        <p class="text-sm text-gray-500 mt-1">
+          Enter search text or leave empty to see all projects
+        </p>
+        <p class="text-xs text-gray-400">
+          Total projects: {{ projects.length }} | Filtered projects:
+          {{ filteredProjects.length }}
+        </p>
+      </div>
       <!-- Show any error messages -->
       <div v-if="errorMessage" class="text-red-600">{{ errorMessage }}</div>
-      <!-- Show project grid if there are any filtered projects -->
-      <div v-else-if="filteredProjects.length > 0">
-        <StreamGrid
-          :projects="filteredProjects"
-          @project-selected="handleProjectSelected"
-        />
+      <!-- Show project grid if there are any projects -->
+      <div v-else>
+        <div v-if="isLoadingProjects" class="text-gray-600 my-4">
+          Loading projects...
+        </div>
+        <p v-else-if="projects.length === 0" class="text-gray-600">
+          No projects available. Please check your Speckle account.
+        </p>
+        <div v-else-if="filteredProjects.length > 0" class="my-4">
+          <StreamGrid
+            :projects="filteredProjects"
+            @project-selected="handleProjectSelected"
+          />
+        </div>
+        <div v-else class="text-gray-600">
+          No projects match your search criteria
+        </div>
       </div>
       <br />
       <!-- Design options selection buttons -->
@@ -147,7 +190,7 @@
           <div class="w-full h-full">
             <h2 class="text-xl font-semibold text-gray-800">Viewer</h2>
             <div
-              ref="viewerContainer"
+              id="viewer-container"
               class="w-full h-[500px] bg-gray-200 rounded-lg shadow-inner"
               :style="{
                 border: '2px solid orange',
@@ -227,14 +270,15 @@ import {
   ref,
   computed,
   watchEffect,
-  nextTick,
-  markRaw,
   onBeforeUnmount,
+  onMounted,
+  nextTick,
 } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import StreamGrid from "@/components/StreamGrid.vue";
 import StreamSearchBar from "@/components/StreamSearchBar.vue";
 import GoogleMap from "@/components/GoogleMap.vue";
-import { useStore } from "@/stores/store-IL";
+import { useImmersionLabStore } from "@/stores/store-IL"; // Updated import
 import {
   Viewer,
   DefaultViewerParams,
@@ -249,62 +293,76 @@ import * as THREE from "three";
 import { saveProjectToLocalStorage } from "@/utils/projectUtils";
 import { StreamGridItemProps } from "@/types/StreamGridItemProps";
 
-// Store initialization
-const store = useStore();
+const store = useImmersionLabStore(); // Updated store usage
+const route = useRoute();
+const router = useRouter();
 
-// Define function to redirect to Speckle authentication page
-const redirectToSpeckleAuthPage = () => store.redirectToSpeckleAuthPage();
+const user = computed(() => store.user); // Use user from the store
+const isLoadingProjects = ref(false);
 
-// Declare necessary reactive variables
-const searchQuery = ref("");
 const isAuthenticated = computed(() => store.isAuthenticated);
-const selectedProject = ref(null);
-const errorMessage = ref(null);
-const viewerContainer = ref(null);
-const viewer = ref(null);
+const selectedProject = ref<{ name: string; models?: { items: any[] } } | null>(
+  null
+);
+const errorMessage = ref<string | null>(null);
+const viewer = ref<Viewer | null>(null);
 const selectedDesignOption = ref("Option1");
-const designOptions = ref({ Option1: [], Option2: [] });
+const designOptions = ref<{
+  Option1: { name: string }[];
+  Option2: { name: string }[];
+}>({
+  Option1: [],
+  Option2: [],
+});
 const viewerBackgroundColor = ref<string>("#ffffff"); // Default to white
 const viewerInitialized = ref(false);
 
-// GraphQL query
-const { data, error } = useQuery({
+const { executeQuery, data, error } = useQuery({
   query: projectsQuery,
   requestPolicy: "network-only",
   context: {
-    fetchOptions: { headers: { Authorization: `Bearer ${store.authToken}` } },
+    fetchOptions: {
+      headers: { Authorization: `Bearer ${store.speckle.token ?? ""}` }, // Use store.speckle.token
+    },
   },
-  pause: computed(() => !isAuthenticated.value),
+  pause: true, // Pause query by default
 });
 
-// Project variables
+const resumeQueryAfterAuth = () => {
+  if (isAuthenticated.value) {
+    executeQuery(); // Use the correct method to execute the query
+  }
+};
+
 const projectNumber = ref("");
 const copied = ref(false);
 const projectSaved = ref(false);
 
-// Define the reference to GoogleMap component
 const googleMap = ref(null);
 
-// Clean up resources when component is destroyed
 onBeforeUnmount(() => {
   disposeViewer();
 });
 
-// Dispose the viewer to prevent memory leaks and WebGL context issues
 const disposeViewer = async () => {
   try {
-    if (viewer.value && typeof viewer.value.dispose === "function") {
+    if (viewer.value) {
       console.log("Disposing viewer instance...");
-      await viewer.value.dispose();
+
+      // Safely dispose the viewer
+      if (typeof viewer.value.dispose === "function") {
+        await viewer.value.dispose();
+      }
+
       viewer.value = null;
       viewerInitialized.value = false;
+      console.log("Viewer disposed successfully.");
     }
   } catch (err) {
     console.error("Error disposing viewer:", err);
   }
 };
 
-// Generate random project number
 const generateRandomProjectNumber = () => {
   const prefix = "IL";
   const year = new Date().getFullYear().toString().slice(-2);
@@ -314,7 +372,6 @@ const generateRandomProjectNumber = () => {
   projectNumber.value = `${prefix}-${year}${month}-${randomNum}`;
 };
 
-// Copy project number to clipboard
 const copyProjectNumberToClipboard = () => {
   if (projectNumber.value) {
     navigator.clipboard
@@ -331,257 +388,360 @@ const copyProjectNumberToClipboard = () => {
   }
 };
 
-// Define projects array
 const projects = ref<StreamGridItemProps[]>([]);
+const searchQuery = ref(""); // Define searchQuery as a ref
+const addModelToDesignOption = async (model: any, option: string) => {
+  if (option === "Option1") {
+    designOptions.value.Option1 = [model];
+  } else if (option === "Option2") {
+    designOptions.value.Option2 = [model];
+  }
 
-// Debugging: Check if data is correctly fetched
+  // Load the model into the viewer
+  if (viewer.value && model.id) {
+    try {
+      console.log(`Loading model ${model.name} into the viewer for ${option}`);
+      await viewer.value.loadObject(model.id);
+      console.log(`Model ${model.name} loaded successfully.`);
+    } catch (err) {
+      console.error(`Failed to load model ${model.name}:`, err);
+    }
+  } else {
+    console.warn("Viewer is not initialized or model ID is missing.");
+  }
+};
+
 watchEffect(() => {
-  if (data.value) {
-    console.log("Fetched Data:", data.value);
+  try {
+    if (data.value && data.value.activeUser && data.value.activeUser.projects) {
+      const fetchedProjects = data.value.activeUser.projects.items || [];
+      projects.value = fetchedProjects.map((project: any) => ({
+        ...project,
+        name: project.name || "Unnamed Project", // Ensure name is always available
+        description: project.description || "",
+        models: project.models || { items: [] },
+      }));
+      console.log("Projects updated:", projects.value.length);
+    }
+  } catch (err) {
+    console.error("Error processing projects data:", err);
+    errorMessage.value = "An error occurred while processing project data.";
   }
 });
 
-// Fetching the data from the API
 watchEffect(() => {
-  if (error.value) {
-    errorMessage.value = error.value.message;
-    return;
-  }
+  console.log("Search query changed:", searchQuery.value);
+  console.log("Available projects to search:", projects.value);
+});
 
-  if (data.value && data.value.activeUser && data.value.activeUser.projects) {
-    const fetchedProjects = data.value.activeUser.projects.items || [];
-    projects.value = fetchedProjects.map((project: any) => ({
-      id: project.id,
-      name: project.name,
-      description: project.description || "",
-      commitsCount: project.commitsCount || 0,
-      role: project.role || "",
-      models: project.models || { items: [] },
-    }));
+watchEffect(() => {
+  if (projects.value && projects.value.length > 0) {
+    console.log(
+      "Project structure sample:",
+      JSON.stringify(projects.value[0], null, 2)
+    );
   }
 });
 
-// Now the filteredProjects will work based on the 'projects' array
 const filteredProjects = computed(() => {
-  // Don't show any projects if the search query is empty
-  if (!searchQuery.value) return []; // Return an empty array by default
+  console.log("Computing filtered projects...");
+  console.log("Search query:", searchQuery.value);
+  console.log("All projects:", projects.value.length);
 
-  // Filter projects based on the search query
-  return projects.value.filter((project) =>
-    project.name.toLowerCase().includes(searchQuery.value.toLowerCase())
-  );
+  if (!searchQuery.value || searchQuery.value.trim() === "") {
+    return projects.value;
+  }
+
+  const query = searchQuery.value.toLowerCase().trim();
+
+  const filtered = projects.value.filter((project) => {
+    // Check project name first
+    if (project.name && project.name.toLowerCase().includes(query)) {
+      return true;
+    }
+
+    // Then check models if available
+    if (project.models?.items?.length > 0) {
+      return project.models.items.some(
+        (model) => model.name && model.name.toLowerCase().includes(query)
+      );
+    }
+
+    return false;
+  });
+
+  console.log("Filtered results:", filtered.length);
+  return filtered;
 });
 
-// Function to determine button classes based on selected design option
-const getButtonClass = (option) => {
+const getButtonClass = (option: string) => {
   return [
-    "py-2 px-4 rounded-lg font-medium transition",
-    selectedDesignOption.value === option
-      ? "bg-orange-500 text-white"
-      : "bg-gray-200 text-gray-800 hover:bg-gray-300",
+    "py-2 px-4 rounded-lg shadow-md",
+    {
+      "bg-blue-600 hover:bg-blue-800 text-white":
+        selectedDesignOption.value === option,
+      "bg-gray-200 hover:bg-gray-400 text-gray-800":
+        selectedDesignOption.value !== option,
+    },
   ];
 };
 
-// Ensure the models for the selected project are defined
 watchEffect(() => {
-  if (selectedProject.value && !selectedProject.value.models) {
-    selectedProject.value.models = { items: [] }; // Ensure it's always defined
+  if (selectedProject.value?.models?.items) {
+    designOptions.value.Option1 = selectedProject.value.models.items.filter(
+      (model: any) => model.option === "Option1"
+    );
+    designOptions.value.Option2 = selectedProject.value.models.items.filter(
+      (model: any) => model.option === "Option2"
+    );
+  } else {
+    designOptions.value.Option1 = [];
+    designOptions.value.Option2 = [];
   }
 });
 
-// Select design option
-const selectDesignOption = (option) => {
+const selectDesignOption = (option: string) => {
   selectedDesignOption.value = option;
 };
 
-// Handle when a project is selected from the project grid
-const handleProjectSelected = (project) => {
+const viewDesignOption = (option: string) => {
+  console.log(`Viewing design option: ${option}`);
+};
+
+const handleProjectSelected = (project: StreamGridItemProps) => {
   console.log("Project selected:", project);
-  selectedProject.value = project;
-  designOptions.value = { Option1: [], Option2: [] }; // Reset design options when a new project is selected
-
-  // Example: Assume your project contains lat/lng info
-  if (project.location) {
-    setMapPosition(project.location.lat, project.location.lng);
-  }
-};
-
-// View selected design option
-const viewDesignOption = (option) => {
-  selectedDesignOption.value = option;
-  loadModels();
-};
-
-// Initialize viewer after DOM update
-const initViewer = async () => {
-  // Return early if already in the process of initializing or no container exists
-  if (!viewerContainer.value || viewerInitialized.value) {
-    return null;
-  }
 
   try {
-    // Dispose existing viewer if present
-    await disposeViewer();
+    // Ensure models property is correctly structured
+    const models =
+      project.models && project.models.items ? project.models : { items: [] };
 
-    // Wait for DOM update
-    await nextTick();
-
-    // Create viewer parameters with proper type
-    const viewerParams = {
-      ...DefaultViewerParams,
-      backgroundColor: new THREE.Color(viewerBackgroundColor.value),
+    selectedProject.value = {
+      ...project,
+      models: models,
     };
 
-    console.log("Creating new viewer instance...");
-    // Create new viewer instance
-    const viewerInstance = new Viewer(viewerContainer.value, viewerParams);
-
-    // Initialize viewer and wait for it to complete
-    await viewerInstance.init();
-
-    // Set the viewer reference after successful initialization
-    viewer.value = markRaw(viewerInstance);
-
-    // Add required extensions
-    viewer.value.createExtension(CameraController);
-    viewer.value.createExtension(SelectionExtension);
-
-    // Mark as initialized
-    viewerInitialized.value = true;
-    console.log("Viewer initialized successfully");
-
-    return viewer.value;
-  } catch (error) {
-    console.error("Error initializing viewer:", error);
-    viewerInitialized.value = false;
-    return null;
+    console.log("Selected project set:", selectedProject.value);
+  } catch (err) {
+    console.error("Error setting selected project:", err);
+    errorMessage.value = "Error selecting project. Please try again.";
   }
 };
 
-// Load models for the selected design options
-// Load models for the selected design options
-const loadModels = async () => {
-  if (!selectedProject.value || !viewer.value) return;
+const debugProjects = () => {
+  console.log("============ PROJECT DEBUGGING ============");
+  console.log(`Total projects: ${projects.value.length}`);
 
-  viewer.value.unloadAll();
+  if (projects.value.length > 0) {
+    const sampleProject = projects.value[0];
+    console.log("Sample project structure:", {
+      name: sampleProject.name,
+      id: sampleProject.id,
+      hasModels: Boolean(sampleProject.models?.items?.length),
+      modelCount: sampleProject.models?.items?.length || 0,
+    });
 
-  const modelsToLoad =
-    selectedDesignOption.value === "Both"
-      ? [...designOptions.value.Option1, ...designOptions.value.Option2]
-      : designOptions.value[selectedDesignOption.value];
-
-  for (const model of modelsToLoad) {
-    if (!model || !model.id) {
-      console.warn("Skipping model due to missing ID:", model);
-      continue;
-    }
-
-    try {
-      // Use UrlHelper to get resource URLs for the model
-      const urls = await UrlHelper.getResourceUrls(
-        `https://app.speckle.systems/projects/${selectedProject.value.id}/models/${model.id}`
-      );
-
-      for (const url of urls) {
-        const loader = new SpeckleLoader(
-          viewer.value.getWorldTree(),
-          url,
-          store.authToken
-        );
-        await viewer.value.loadObject(loader, true);
-        console.log(`Successfully loaded model: ${model.id}`);
-      }
-    } catch (err) {
-      console.error(`Error loading model ${model.id}:`, err);
+    if (sampleProject.models?.items?.length > 0) {
+      console.log("Sample model:", sampleProject.models.items[0]);
     }
   }
+
+  console.log("Current search query:", searchQuery.value);
+  console.log("Filtered projects count:", filteredProjects.value.length);
+  console.log("=========================================");
 };
 
-// Define the addModelToDesignOption function
-const addModelToDesignOption = async (model, option) => {
-  if (!model || !model.id) {
-    console.warn("Invalid model being added:", model);
-    return;
+const executeProjectQuery = async () => {
+  try {
+    isLoadingProjects.value = true;
+    console.log(
+      "Executing projects query with token:",
+      store.speckle.token?.substring(0, 10) + "..."
+    );
+    await executeQuery({
+      requestPolicy: "network-only",
+      context: {
+        fetchOptions: {
+          headers: { Authorization: `Bearer ${store.speckle.token || ""}` },
+        },
+      },
+    });
+
+    // Add a small delay to ensure data is processed
+    setTimeout(debugProjects, 1000);
+  } catch (err) {
+    console.error("Error executing project query:", err);
+    errorMessage.value = "Failed to fetch projects. Please try again.";
+  } finally {
+    isLoadingProjects.value = false;
+  }
+};
+
+onMounted(async () => {
+  console.log("Component mounted. Starting initialization sequence.");
+
+  // First check authentication status and fetch projects
+  if (isAuthenticated.value && store.speckle.token) {
+    console.log("User is already authenticated. Fetching projects...");
+    executeProjectQuery();
   }
 
-  console.log(`Adding model to ${option}:`, model);
+  // Wait before initializing the viewer
+  setTimeout(() => {
+    initializeViewer();
+  }, 800);
 
-  // Ensure Vue detects the change
-  designOptions.value = {
-    ...designOptions.value,
-    [option]: [model], // Assign a new array
-  };
-
-  selectedDesignOption.value = option;
-  await loadModels(); // Ensure models are loaded after updating
-};
-
-watchEffect(() => {
-  console.log("Design option changed:", designOptions.value);
+  // Set up auth change watcher
+  watchEffect(() => {
+    if (isAuthenticated.value && store.speckle.token) {
+      console.log("Authentication state changed. Fetching projects...");
+      executeProjectQuery();
+    }
+  });
 });
 
-// Set the map view center position
-const setMapPosition = (lat, lng) => {
-  if (googleMap.value && googleMap.value.map) {
-    try {
-      googleMap.value.map.setCenter(new google.maps.LatLng(lat, lng));
-    } catch (error) {
-      console.error("Error setting map position:", error);
+const handleAuthClick = () => {
+  if (!isAuthenticated.value) {
+    console.log("Starting authentication process");
+    const loginResult = store.speckle.login();
+    if (loginResult instanceof Promise) {
+      loginResult
+        .then(() => {
+          console.log(
+            "Authentication successful, token:",
+            store.speckle.token ? "Present" : "Missing"
+          );
+          if (store.speckle.token) {
+            executeProjectQuery();
+          }
+        })
+        .catch((err) => {
+          console.error("Authentication error:", err);
+        });
+    } else {
+      console.error("store.speckle.login() did not return a Promise.");
     }
+  } else {
+    console.log("User is already authenticated");
   }
 };
 
-// Save the project when the button is clicked
-const saveProject = () => {
-  if (!projectNumber.value) {
-    generateRandomProjectNumber();
+const handleLogout = () => {
+  console.log("Logging out user");
+  try {
+    store.speckle.logout();
+    console.log("Logout successful");
+    selectedProject.value = null;
+    projects.value = [];
+  } catch (err) {
+    console.error("Logout error:", err);
   }
+};
 
-  const projectData = {
-    projectNumber: projectNumber.value,
-    selectedProject: selectedProject.value,
-    designOptions: designOptions.value,
-  };
+const initializeViewer = async () => {
+  // Clear any error messages
+  errorMessage.value = null;
 
   try {
-    saveProjectToLocalStorage(projectNumber.value, projectData);
-    console.log("Project saved successfully:", projectNumber.value);
+    // Wait for DOM to be ready
+    await nextTick();
 
-    // Show saved confirmation
-    projectSaved.value = true;
+    // Get container element
+    const containerElement = document.getElementById("viewer-container");
+
+    console.log("Viewer container element:", containerElement);
+
+    if (!containerElement) {
+      errorMessage.value =
+        "Viewer container not found. Please refresh the page.";
+      return;
+    }
+
+    // Clean up existing viewer
+    if (viewerInitialized.value && viewer.value) {
+      await disposeViewer();
+    }
+
+    // Create the viewer with proper configuration object
+    viewer.value = new Viewer({
+      container: containerElement,
+      showStats: false,
+      environmentSettings: {
+        enable: false,
+      },
+    });
+
+    // Configure viewer after creation
+    if (viewer.value && viewer.value.renderer) {
+      viewer.value.renderer.setClearColor(
+        new THREE.Color(viewerBackgroundColor.value)
+      );
+    }
+
+    // Add extensions after a short delay
     setTimeout(() => {
-      projectSaved.value = false;
-    }, 3000);
-  } catch (error) {
-    console.error("Error saving project:", error);
+      if (viewer.value) {
+        try {
+          new CameraController(viewer.value);
+          new SelectionExtension(
+            viewer.value,
+            new CameraController(viewer.value)
+          );
+          console.log("Viewer extensions added successfully");
+        } catch (extErr) {
+          console.error("Error adding viewer extensions:", extErr);
+        }
+      }
+    }, 500);
+
+    viewerInitialized.value = true;
+    console.log("Viewer initialized successfully");
+  } catch (err) {
+    console.error("Error initializing viewer:", err);
+    errorMessage.value =
+      "Failed to initialize viewer: " +
+      (err instanceof Error ? err.message : String(err));
   }
 };
 
-// Update the background color of the viewer when changed
+// Update watchEffect for background color changes with better error handling
 watchEffect(() => {
   if (viewer.value && viewerInitialized.value) {
     try {
-      if (typeof viewer.value.setBackgroundColor === "function") {
-        viewer.value.setBackgroundColor(
-          new THREE.Color(viewerBackgroundColor.value)
-        );
-      }
-    } catch (error) {
-      console.warn("Could not update background color:", error);
+      // Update the viewer background color when it changes
+      viewer.value.renderer.setClearColor(
+        new THREE.Color(viewerBackgroundColor.value)
+      );
+    } catch (colorErr) {
+      console.error("Error updating viewer background color:", colorErr);
+      // Don't set errorMessage here to avoid disrupting the UI for a non-critical error
     }
   }
 });
 
-// Initialize viewer on page load
-watchEffect(() => {
-  if (
-    viewerContainer.value &&
-    !viewerInitialized.value &&
-    isAuthenticated.value
-  ) {
-    initViewer();
+const saveProject = () => {
+  if (projectNumber.value) {
+    try {
+      // Save the project with selected information
+      saveProjectToLocalStorage({
+        projectNumber: projectNumber.value,
+        projectName: selectedProject.value?.name || "",
+        designOptions: designOptions.value,
+        // Add any other project details you want to save
+      });
+
+      projectSaved.value = true;
+
+      // Reset the flag after a few seconds
+      setTimeout(() => {
+        projectSaved.value = false;
+      }, 5000);
+    } catch (error) {
+      console.error("Error saving project:", error);
+      errorMessage.value = "Failed to save project. Please try again.";
+    }
   }
-});
+};
 </script>
 
 <style scoped>

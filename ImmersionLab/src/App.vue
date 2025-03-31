@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { RouterLink, RouterView, useRoute } from "vue-router";
 import HelloWorld from "./components/HelloWorld.vue";
+import { onMounted, ref } from "vue";
 
-// Access the current route
 const route = useRoute();
 </script>
 
@@ -24,6 +24,10 @@ const route = useRoute();
       />
 
       <nav>
+        <!-- <div v-if="user">
+          <div>{{ user.name }}</div>
+          <img :src="user.avatar" alt="avatar" width="50" height="50" />
+        </div> -->
         <RouterLink to="/">Home</RouterLink>
         <RouterLink to="/Step1">Step1</RouterLink>
         <RouterLink to="/Step2">Step2</RouterLink>

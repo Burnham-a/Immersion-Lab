@@ -2,7 +2,7 @@ import "./assets/main.css";
 
 import { createApp } from "vue";
 import App from "./App.vue";
-import router from "./router";
+import router from "./router/index.ts";
 import { createPinia } from "pinia";
 import urql from "@urql/vue";
 import { SpeckleGraphQLClient } from "./graphql/client";
