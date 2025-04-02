@@ -191,11 +191,8 @@
             <h2 class="text-xl font-semibold text-gray-800">Viewer</h2>
             <div
               id="viewer-container"
+              ref="viewerContainer"
               class="w-full h-[500px] bg-gray-200 rounded-lg shadow-inner"
-              :style="{
-                border: '2px solid orange',
-                backgroundColor: viewerBackgroundColor,
-              }"
             ></div>
           </div>
           <br />
@@ -276,41 +273,31 @@ import {
   onBeforeUnmount,
   onMounted,
   nextTick,
+  markRaw,
 } from "vue";
-console.log("Vue imports loaded successfully.");
-
 import { useRoute, useRouter } from "vue-router";
-console.log("Vue Router imports loaded successfully.");
 
 import StreamGrid from "@/components/StreamGrid.vue";
 import StreamSearchBar from "@/components/StreamSearchBar.vue";
 import GoogleMap from "@/components/GoogleMap.vue";
-console.log("Component imports loaded successfully.");
-
 import { useImmersionLabStore } from "@/stores/store-IL";
-console.log("Store import loaded successfully.");
-
 import {
   Viewer,
   DefaultViewerParams,
-  SpeckleLoader,
   CameraController,
   SelectionExtension,
   UrlHelper,
   IViewer,
 } from "@speckle/viewer";
+import ObjectLoader from "@speckle/objectloader"; // Using ObjectLoader instead of SpeckleLoader
 console.log("Speckle Viewer imports loaded successfully.");
-
 import { useQuery } from "@urql/vue";
 import { projectsQuery } from "@/graphql/queries/streams";
 console.log("GraphQL and URQL imports loaded successfully.");
-
 import * as THREE from "three";
 console.log("THREE.js imports loaded successfully.");
-
 import { saveProjectToLocalStorage } from "@/utils/projectUtils";
 console.log("Utility imports loaded successfully.");
-
 import { StreamGridItemProps } from "@/types/StreamGridItemProps";
 
 const store = useImmersionLabStore(); // Updated store usage
@@ -325,17 +312,15 @@ const selectedProject = ref<{ name: string; models?: { items: any[] } } | null>(
   null
 );
 const errorMessage = ref<string | null>(null);
-const viewer = ref<Viewer | null>(null);
 const selectedDesignOption = ref("Option1");
 const designOptions = ref<{
-  Option1: { name: string }[];
-  Option2: { name: string }[];
+  Option1: { name: string; id: string }[];
+  Option2: { name: string; id: string }[];
 }>({
   Option1: [],
   Option2: [],
 });
 const viewerBackgroundColor = ref<string>("#ffffff"); // Default to white
-const viewerInitialized = ref(false);
 
 const { executeQuery, data, error } = useQuery({
   query: projectsQuery,
@@ -348,41 +333,39 @@ const { executeQuery, data, error } = useQuery({
   pause: true, // Pause query by default
 });
 
-const resumeQueryAfterAuth = () => {
-  if (isAuthenticated.value) {
-    executeQuery(); // Use the correct method to execute the query
-  }
-};
-
+// Project variables
 const projectNumber = ref("");
 const copied = ref(false);
 const projectSaved = ref(false);
 
 const googleMap = ref(null);
 
+// Reference to the Speckle Viewer and container
+const viewer = ref<IViewer | null>(null);
+const viewerContainer = ref<HTMLElement | null>(null);
+const viewerInitialized = ref(false);
+const isLoadingModel = ref(false);
+
+// Clean up resources when component is destroyed
 onBeforeUnmount(() => {
   disposeViewer();
 });
 
+// Dispose the viewer to prevent memory leaks and WebGL context issues
 const disposeViewer = async () => {
   try {
-    if (viewer.value) {
+    if (viewer.value && typeof viewer.value.dispose === "function") {
       console.log("Disposing viewer instance...");
-
-      // Safely dispose the viewer
-      if (typeof viewer.value.dispose === "function") {
-        await viewer.value.dispose();
-      }
-
+      await viewer.value.dispose();
       viewer.value = null;
       viewerInitialized.value = false;
-      console.log("Viewer disposed successfully.");
     }
   } catch (err) {
     console.error("Error disposing viewer:", err);
   }
 };
 
+// Generate random project number
 const generateRandomProjectNumber = () => {
   const prefix = "IL";
   const year = new Date().getFullYear().toString().slice(-2);
@@ -392,6 +375,7 @@ const generateRandomProjectNumber = () => {
   projectNumber.value = `${prefix}-${year}${month}-${randomNum}`;
 };
 
+// Copy project number to clipboard
 const copyProjectNumberToClipboard = () => {
   if (projectNumber.value) {
     navigator.clipboard
@@ -410,25 +394,301 @@ const copyProjectNumberToClipboard = () => {
 
 const projects = ref<StreamGridItemProps[]>([]);
 const searchQuery = ref(""); // Define searchQuery as a ref
-const addModelToDesignOption = async (model: any, option: string) => {
-  if (option === "Option1") {
-    designOptions.value.Option1 = [model];
-  } else if (option === "Option2") {
-    designOptions.value.Option2 = [model];
+
+// *** KEY CHANGE: Using the initialization approach from the previous script ***
+const initializeViewer = async () => {
+  // Return early if already in the process of initializing or no container exists
+  if (!viewerContainer.value || viewerInitialized.value) {
+    console.log("Viewer already initialized or container not available");
+    return null;
   }
 
-  // Load the model into the viewer
-  if (viewer.value && model.id) {
-    try {
-      console.log(`Loading model ${model.name} into the viewer for ${option}`);
-      await viewer.value.loadObject(model.id);
-      console.log(`Model ${model.name} loaded successfully.`);
-    } catch (err) {
-      console.error(`Failed to load model ${model.name}:`, err);
+  try {
+    // Dispose existing viewer if present
+    await disposeViewer();
+
+    // Wait for DOM update
+    await nextTick();
+
+    // Make sure the container has dimensions
+    if (
+      viewerContainer.value.clientWidth === 0 ||
+      viewerContainer.value.clientHeight === 0
+    ) {
+      console.warn("Viewer container has no dimensions. Setting minimum size.");
+      viewerContainer.value.style.minHeight = "500px";
+      viewerContainer.value.style.minWidth = "100%";
     }
-  } else {
-    console.warn("Viewer is not initialized or model ID is missing.");
+
+    console.log("Creating new viewer instance...");
+    // Create viewer parameters with proper type
+    const viewerParams = {
+      ...DefaultViewerParams,
+      backgroundColor: new THREE.Color(viewerBackgroundColor.value),
+    };
+
+    // *** KEY CHANGE: Initialize viewer using the approach from the previous script ***
+    console.log("Initializing viewer with container:", viewerContainer.value);
+    const viewerInstance = new Viewer(viewerContainer.value, viewerParams);
+
+    // Initialize viewer and wait for it to complete
+    await viewerInstance.init();
+
+    // Set the viewer reference after successful initialization
+    viewer.value = markRaw(viewerInstance);
+
+    // Add required extensions
+    viewer.value.createExtension(CameraController);
+    viewer.value.createExtension(SelectionExtension);
+
+    // Mark as initialized
+    viewerInitialized.value = true;
+    console.log("Viewer initialized successfully");
+
+    return viewer.value;
+  } catch (error) {
+    console.error("Error initializing Speckle Viewer:", error);
+    console.error("Error details:", {
+      message: (error as Error).message,
+      stack: (error as Error).stack,
+      name: (error as Error).name,
+    });
+    viewerInitialized.value = false;
+    return null;
   }
+};
+
+// Watch for changes in the background color and update the viewer
+watchEffect(() => {
+  if (viewerInitialized.value && viewer.value) {
+    try {
+      if (typeof viewer.value.setBackgroundColor === "function") {
+        viewer.value.setBackgroundColor(
+          new THREE.Color(viewerBackgroundColor.value)
+        );
+      }
+    } catch (error) {
+      console.warn("Could not update background color:", error);
+    }
+  }
+});
+
+// *** KEY CHANGE: Using the loadModels approach from the previous script ***
+const loadModels = async () => {
+  if (!selectedProject.value || !viewer.value) {
+    console.error("Cannot load models: Project or viewer not available");
+    return;
+  }
+
+  try {
+    console.log("Unloading existing objects before loading new ones");
+    // Clear existing objects from viewer
+    if (typeof viewer.value.unloadAll === "function") {
+      viewer.value.unloadAll();
+    } else if (typeof viewer.value.clearObjects === "function") {
+      viewer.value.clearObjects();
+    }
+
+    const modelsToLoad =
+      selectedDesignOption.value === "Both"
+        ? [...designOptions.value.Option1, ...designOptions.value.Option2]
+        : designOptions.value[selectedDesignOption.value];
+
+    console.log(
+      `Loading ${modelsToLoad.length} models for option: ${selectedDesignOption.value}`
+    );
+
+    for (const model of modelsToLoad) {
+      if (!model || !model.id) {
+        console.warn("Skipping model due to missing ID:", model);
+        continue;
+      }
+
+      try {
+        const streamId = model.id;
+        console.log(`Loading model: ${streamId}`);
+
+        // APPROACH 1: Try using the viewer's built-in loading methods
+        try {
+          // Most direct approach
+          if (typeof viewer.value.load === "function") {
+            await viewer.value.load(streamId, { token: store.speckle.token });
+            console.log(
+              `Model loaded successfully via direct load: ${streamId}`
+            );
+            continue;
+          }
+
+          // Alternative direct approach
+          if (typeof viewer.value.loadStream === "function") {
+            await viewer.value.loadStream(streamId, {
+              token: store.speckle.token,
+            });
+            console.log(
+              `Model loaded successfully via loadStream: ${streamId}`
+            );
+            continue;
+          }
+        } catch (directLoadError) {
+          console.log("Direct load methods failed:", directLoadError);
+        }
+
+        // APPROACH 2: Try using SpeckleLoader
+        try {
+          if (
+            viewer.value.getWorldTree &&
+            typeof SpeckleLoader === "function"
+          ) {
+            const worldTree = viewer.value.getWorldTree();
+            if (worldTree) {
+              // Create a loader with the necessary parameters
+              const loaderParams = {
+                serverUrl: "app.speckle.systems",
+                streamId: streamId,
+                objectId: model.id,
+                token: store.speckle.token,
+              };
+
+              const loader = new SpeckleLoader(worldTree, loaderParams);
+
+              if (typeof viewer.value.loadObject === "function") {
+                await viewer.value.loadObject(loader);
+                console.log(
+                  `Model loaded successfully via SpeckleLoader: ${streamId}`
+                );
+                continue;
+              }
+            }
+          }
+        } catch (loaderError) {
+          console.log("SpeckleLoader approach failed:", loaderError);
+        }
+
+        // APPROACH 3: Try URL-based approach
+        try {
+          // Construct URL manually as fallback
+          const url = `https://app.speckle.systems/projects/${streamId}/models/${model.id}`;
+          console.log(`Trying to load from URL: ${url}`);
+
+          if (typeof UrlHelper?.getResourceUrls === "function") {
+            const urls = await UrlHelper.getResourceUrls(url);
+
+            if (urls && urls.length > 0) {
+              for (const resourceUrl of urls) {
+                if (typeof viewer.value.loadObjectFromUrl === "function") {
+                  await viewer.value.loadObjectFromUrl(resourceUrl, {
+                    token: store.speckle.token,
+                  });
+                  console.log(`Model loaded from URL: ${resourceUrl}`);
+                } else if (
+                  viewer.value.getWorldTree &&
+                  typeof SpeckleLoader === "function"
+                ) {
+                  const worldTree = viewer.value.getWorldTree();
+                  if (worldTree) {
+                    const urlLoader = new SpeckleLoader(
+                      worldTree,
+                      resourceUrl,
+                      store.speckle.token
+                    );
+                    await viewer.value.loadObject(urlLoader);
+                    console.log(
+                      `Model loaded via URL and SpeckleLoader: ${resourceUrl}`
+                    );
+                  }
+                }
+              }
+              continue;
+            }
+          }
+        } catch (urlError) {
+          console.log("URL-based loading failed:", urlError);
+        }
+
+        // APPROACH 4: Last resort - try using ObjectLoader without onProgress
+        try {
+          console.log("Trying ObjectLoader approach without progress tracking");
+
+          const objectLoader = new ObjectLoader({
+            serverUrl: "https://app.speckle.systems",
+            token: store.speckle.token || undefined,
+            streamId: streamId,
+            objectId: model.id, // Default to main branch if only stream ID is provided
+            options: {
+              enableCaching: true,
+              fullyTraverseArrays: false,
+              excludeProps: ["displayValue", "displayMesh"],
+            },
+          });
+
+          console.log("ObjectLoader created, attempting to load...");
+
+          // Don't use onProgress at all, just call load()
+          const obj = await objectLoader.load();
+          console.log("Object successfully loaded");
+
+          if (
+            obj &&
+            viewer.value &&
+            typeof viewer.value.loadObject === "function"
+          ) {
+            await viewer.value.loadObject(obj);
+            console.log(`Model added to viewer: ${streamId}`);
+            continue;
+          }
+        } catch (objectLoaderError) {
+          console.error("ObjectLoader approach failed:", objectLoaderError);
+        }
+
+        console.error(`All loading approaches failed for model ${streamId}`);
+      } catch (modelError) {
+        console.error(`Error processing model ${model.id}:`, modelError);
+      }
+    }
+
+    // Center camera on all loaded objects
+    try {
+      if (typeof viewer.value.requestFullCameraRefresh === "function") {
+        viewer.value.requestFullCameraRefresh();
+      } else if (typeof viewer.value.zoomExtents === "function") {
+        viewer.value.zoomExtents();
+      } else if (typeof viewer.value.centerAndZoomToAllObjects === "function") {
+        viewer.value.centerAndZoomToAllObjects();
+      }
+    } catch (cameraError) {
+      console.warn("Error refreshing camera view:", cameraError);
+    }
+  } catch (err) {
+    console.error("Error in loadModels:", err);
+    errorMessage.value = "Failed to load models. Please try again.";
+  }
+};
+
+const addModelToDesignOption = async (model: any, option: string) => {
+  if (!viewerInitialized.value) {
+    console.error("Viewer is not initialized. Cannot assign model.");
+    return;
+  }
+
+  console.log(`Adding model to ${option}:`, model);
+
+  // Ensure Vue detects the change
+  if (option === "Option1") {
+    designOptions.value = {
+      ...designOptions.value,
+      Option1: [model],
+    };
+  } else if (option === "Option2") {
+    designOptions.value = {
+      ...designOptions.value,
+      Option2: [model],
+    };
+  }
+
+  selectedDesignOption.value = option;
+
+  // Load the model into the viewer
+  await loadModels();
 };
 
 watchEffect(() => {
@@ -524,8 +784,21 @@ const selectDesignOption = (option: string) => {
   selectedDesignOption.value = option;
 };
 
-const viewDesignOption = (option: string) => {
+const viewDesignOption = async (option: string) => {
   console.log(`Viewing design option: ${option}`);
+  selectedDesignOption.value = option;
+  await loadModels(); // Load models for the selected option
+};
+
+// Set the map view center position
+const setMapPosition = (lat: number, lng: number) => {
+  if (googleMap.value && googleMap.value.map) {
+    try {
+      googleMap.value.map.setCenter({ lat, lng });
+    } catch (error) {
+      console.error("Error setting map position:", error);
+    }
+  }
 };
 
 const handleProjectSelected = (project: StreamGridItemProps) => {
@@ -540,6 +813,14 @@ const handleProjectSelected = (project: StreamGridItemProps) => {
       ...project,
       models: models,
     };
+
+    // Reset design options when a new project is selected
+    designOptions.value = { Option1: [], Option2: [] };
+
+    // If the project has location data, set the map position
+    if (project.location) {
+      setMapPosition(project.location.lat, project.location.lng);
+    }
 
     console.log("Selected project set:", selectedProject.value);
   } catch (err) {
@@ -606,16 +887,22 @@ onMounted(async () => {
     executeProjectQuery();
   }
 
-  // Wait before initializing the viewer
-  setTimeout(() => {
-    initializeViewer();
-  }, 800);
-
   // Set up auth change watcher
   watchEffect(() => {
     if (isAuthenticated.value && store.speckle.token) {
       console.log("Authentication state changed. Fetching projects...");
       executeProjectQuery();
+    }
+  });
+
+  // Initialize viewer when container is available and user is authenticated
+  watchEffect(async () => {
+    if (
+      viewerContainer.value &&
+      !viewerInitialized.value &&
+      isAuthenticated.value
+    ) {
+      await initializeViewer();
     }
   });
 });
@@ -633,6 +920,8 @@ const handleAuthClick = () => {
           );
           if (store.speckle.token) {
             executeProjectQuery();
+            // Initialize viewer after authentication
+            nextTick(() => initializeViewer());
           }
         })
         .catch((err) => {
@@ -649,13 +938,23 @@ const handleAuthClick = () => {
 const handleLogout = async () => {
   console.log("Logging out user...");
   try {
-    // Clear authentication state in the store
-    store.speckle.token = null;
-    store.isAuthenticated = false;
+    // First clear any models in the viewer to prevent errors
+    await disposeViewer();
 
-    // Clear user and project data
+    // Use the speckle logout method from the store instead of the direct import
+    await store.speckle.logout();
+
+    // Clear authentication state in the store (may be redundant if store.speckle.logout() handles this)
+    store.isAuthenticated = false;
+    store.user = null;
+
+    // Clear application state
     selectedProject.value = null;
     projects.value = [];
+    designOptions.value = { Option1: [], Option2: [] };
+    projectNumber.value = "";
+    projectSaved.value = false;
+
     console.log("Logout successful");
   } catch (err) {
     console.error("Logout error:", err);
@@ -663,105 +962,19 @@ const handleLogout = async () => {
   }
 };
 
-const initializeViewer = async () => {
-  // Clear any error messages
-  errorMessage.value = null;
-
-  try {
-    // Wait for DOM to be ready
-    await nextTick();
-
-    // Get container element
-    const containerElement = document.getElementById("viewer-container");
-
-    console.log("Viewer container element:", containerElement);
-
-    // Ensure containerElement is a valid HTMLElement
-    if (!(containerElement instanceof HTMLElement)) {
-      errorMessage.value =
-        "Viewer container is not a valid DOM element. Please refresh the page.";
-      console.error("Invalid container element:", containerElement);
-      console.log("Type of containerElement:", typeof containerElement);
-      return;
-    }
-
-    // Clean up existing viewer
-    if (viewerInitialized.value && viewer.value) {
-      await disposeViewer();
-    }
-
-    // Create the viewer with proper configuration object
-    viewer.value = new Viewer({
-      container: containerElement, // Pass the validated HTMLElement
-      showStats: false,
-      environmentSettings: {
-        enable: false,
-      },
-    });
-
-    console.log("Viewer instance created:", viewer.value);
-
-    // Configure viewer after creation
-    if (viewer.value?.speckleRenderer?.viewer) {
-      const renderer = viewer.value.speckleRenderer.viewer;
-      renderer.renderer.setClearColor(
-        new THREE.Color(viewerBackgroundColor.value)
-      );
-    }
-
-    // Add extensions after a short delay
-    setTimeout(() => {
-      if (viewer.value) {
-        try {
-          const viewerForExtensions = viewer.value as unknown as IViewer;
-          new CameraController(viewerForExtensions);
-          new SelectionExtension(
-            viewerForExtensions,
-            new CameraController(viewerForExtensions)
-          );
-          console.log("Viewer extensions added successfully");
-        } catch (extErr) {
-          console.error("Error adding viewer extensions:", extErr);
-        }
-      }
-    }, 500);
-
-    viewerInitialized.value = true;
-    console.log("Viewer initialized successfully");
-  } catch (err) {
-    console.error("Error initializing viewer:", err);
-    errorMessage.value =
-      "Failed to initialize viewer: " +
-      (err instanceof Error ? err.message : String(err));
-  }
-};
-
-// Update watchEffect for background color changes
-watchEffect(() => {
-  if (viewer.value && viewerInitialized.value) {
-    try {
-      if (viewer.value.speckleRenderer?.viewer) {
-        const renderer = viewer.value.speckleRenderer.viewer;
-        renderer.renderer.setClearColor(
-          new THREE.Color(viewerBackgroundColor.value)
-        ); // Corrected property path
-      }
-    } catch (colorErr) {
-      console.error("Error updating viewer background color:", colorErr);
-    }
-  }
-});
-
 const saveProject = () => {
   if (projectNumber.value) {
     try {
-      // Save the project with selected information
-      saveProjectToLocalStorage({
+      const projectData = {
         projectNumber: projectNumber.value,
         projectName: selectedProject.value?.name || "",
         designOptions: designOptions.value,
-        projectData: { models: selectedProject.value?.models || [] }, // Added missing argument
-      });
+        selectedProject: selectedProject.value,
+        projectData: { models: selectedProject.value?.models || [] },
+      };
+
+      // Save the project with selected information
+      saveProjectToLocalStorage(projectData);
 
       projectSaved.value = true;
 

@@ -20,7 +20,7 @@ const router = createRouter({
     {
       path: "/ImmersionLab",
       name: "ImmersionLab",
-      component: () => import("../views/ImmersionLabSetup.vue"),
+      component: () => import("@/views/ImmersionLabSetup.vue"), // Ensure correct path
       beforeEnter: authGuardIL, // Ensure authGuardIL is used
     },
     {

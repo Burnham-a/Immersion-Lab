@@ -38,12 +38,14 @@ export interface Project {
 }
 
 export interface StreamGridProps {
-  projects: Project[];
+  projects?: Project[]; // Make projects optional
   fetching?: boolean;
   error?: CombinedError;
 }
 
-const props = defineProps<StreamGridProps>();
+const props = withDefaults(defineProps<StreamGridProps>(), {
+  projects: () => [], // Provide default empty array
+});
 
 const emit = defineEmits(["project-selected"]);
 

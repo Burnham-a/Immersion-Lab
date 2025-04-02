@@ -31,7 +31,7 @@ const router = useRouter();
 const store = useImmersionLabStore();
 
 const goToStaffHome = () => {
-  router.push({ name: "ImmersionLab" });
+  router.push({ name: "ImmersionLab" }); // Updated to match the correct route name
 };
 
 const goToClientApp = () => {
