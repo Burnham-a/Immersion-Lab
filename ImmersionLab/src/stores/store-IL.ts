@@ -21,17 +21,34 @@ export const useImmersionLabStore = defineStore("immersionLab", () => {
 
   const speckle = new SpeckleAuthClient(options);
 
-  async function authenticateUser() {
-    const user = await speckle.user();
-    if (!user) {
-      await speckle.login();
+  async function authenticate() {
+    try {
+      const userData = await speckle.user();
+      if (!userData) {
+        await speckle.login();
+        return;
+      }
+      user.value = userData;
+      isAuthenticated.value = true;
+      return userData;
+    } catch (error) {
+      console.error("Authentication error:", error);
+      isAuthenticated.value = false;
+      user.value = null;
+      throw error;
     }
-    return user;
   }
 
-  async function logoutUser() {
-    await speckle.logout();
+  async function logout() {
+    try {
+      await speckle.logout();
+      isAuthenticated.value = false;
+      user.value = null;
+    } catch (error) {
+      console.error("Logout error:", error);
+      throw error;
+    }
   }
 
-  return { isAuthenticated, user, speckle };
+  return { isAuthenticated, user, speckle, authenticate, logout };
 });
