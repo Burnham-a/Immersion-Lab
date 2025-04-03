@@ -1,0 +1,15 @@
+/* Add these styles to fix button alignment */
+button[class*="Assign to Option"] {
+  min-width: 130px;
+  width: auto;
+  display: inline-block;
+  text-align: center;
+}
+
+/* Ensure button containers have consistent spacing */
+.button-container {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 280px;
+}

@@ -26,29 +26,33 @@
                 Versions: {{ model.versions?.totalCount || 0 }}
               </p>
             </div>
-            <!-- Buttons to assign models to either Option1 or Option2 -->
-            <button
-              @click="addModelToDesignOption(model, 'Option1')"
-              class="bg-orange-600 hover:bg-orange-800 text-white text-sm font-medium px-4 py-2 rounded-lg shadow-md"
-              :class="{ 'bg-orange-900': isModelAssignedTo(model, 'Option1') }"
-            >
-              {{
-                isModelAssignedTo(model, "Option1")
-                  ? "Selected for Option 1"
-                  : "Assign to Option 1"
-              }}
-            </button>
-            <button
-              @click="addModelToDesignOption(model, 'Option2')"
-              class="bg-green-600 hover:bg-green-800 text-white text-sm font-medium px-4 py-2 rounded-lg shadow-md"
-              :class="{ 'bg-green-900': isModelAssignedTo(model, 'Option2') }"
-            >
-              {{
-                isModelAssignedTo(model, "Option2")
-                  ? "Selected for Option 2"
-                  : "Assign to Option 2"
-              }}
-            </button>
+            <div class="flex space-x-2 min-w-[200px] justify-end">
+              <!-- Use fixed width for buttons to ensure alignment -->
+              <button
+                @click="addModelToDesignOption(model, 'Option1')"
+                class="w-32 px-3 py-1 bg-orange-600 text-white text-sm rounded hover:bg-orange-800"
+                :class="{
+                  'bg-orange-900': isModelAssignedTo(model, 'Option1'),
+                }"
+              >
+                {{
+                  isModelAssignedTo(model, "Option1")
+                    ? "Selected for Option 1"
+                    : "Assign to Option 1"
+                }}
+              </button>
+              <button
+                @click="addModelToDesignOption(model, 'Option2')"
+                class="w-32 px-3 py-1 bg-green-600 text-white text-sm rounded hover:bg-green-800"
+                :class="{ 'bg-green-900': isModelAssignedTo(model, 'Option2') }"
+              >
+                {{
+                  isModelAssignedTo(model, "Option2")
+                    ? "Selected for Option 2"
+                    : "Assign to Option 2"
+                }}
+              </button>
+            </div>
           </div>
         </li>
       </ul>

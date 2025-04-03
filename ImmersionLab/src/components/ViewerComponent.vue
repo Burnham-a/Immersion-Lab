@@ -1,28 +1,55 @@
 <template>
-  <div class="w-full h-full flex flex-col space-y-2 mt-6">
+  <div class="w-full h-full flex flex-col space-y-6">
     <!-- Speckle Viewer Section -->
-    <div class="w-full h-full">
-      <h2 class="text-xl font-semibold text-gray-800">Viewer</h2>
+    <div class="w-full relative" style="height: 60vh; min-height: 400px">
+      <h2 class="text-xl font-semibold text-gray-800 mb-2">Viewer</h2>
       <div
         id="viewer-container"
         ref="viewerContainer"
-        class="w-full h-[500px] bg-gray-200 rounded-lg shadow-inner"
-      ></div>
-      <div v-if="isLoadingModel" class="text-blue-600 mt-2">
-        Loading model, please wait...
+        class="w-full h-full rounded-lg shadow-inner overflow-hidden"
+        style="z-index: 1; position: relative; background: #f0f0f0"
+      >
+        <!-- Empty fallback element for when canvas isn't rendered properly -->
+        <div
+          v-if="forceResetNeeded || !viewerInitialized"
+          class="absolute inset-0 flex items-center justify-center bg-gray-100 bg-opacity-50"
+        >
+          <button
+            @click="reinitializeViewer"
+            class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+          >
+            Reload Viewer
+          </button>
+        </div>
+
+        <!-- Canvas debugging info -->
+        <div
+          v-if="debugInfo"
+          class="absolute bottom-2 left-2 bg-white/80 text-xs p-1 rounded z-50"
+        >
+          Canvas: {{ debugInfo }}
+        </div>
       </div>
-      <div v-if="errorMessage" class="text-red-600 mt-2">
+      <div
+        v-if="isLoadingModel"
+        class="text-blue-600 mt-2 absolute top-4 right-4 bg-white px-2 py-1 rounded shadow z-20"
+      >
+        <span class="inline-block animate-pulse mr-1">⏳</span> Loading model...
+      </div>
+      <div
+        v-if="errorMessage"
+        class="text-red-600 mt-2 bg-white/80 p-1 rounded"
+      >
         {{ errorMessage }}
       </div>
     </div>
-    <br />
+
     <!-- Google Map Section -->
-    <div class="w-full h-full">
-      <h2 class="text-xl font-semibold text-gray-800">Map View</h2>
-      <div class="flex-1">
-        <br />
+    <div class="w-full" style="height: 30vh; min-height: 250px">
+      <h2 class="text-xl font-semibold text-gray-800 mb-2">Map View</h2>
+      <div class="w-full h-full">
         <!-- Google map component -->
-        <GoogleMap ref="googleMap" />
+        <GoogleMap ref="googleMap" class="rounded-lg overflow-hidden shadow" />
       </div>
     </div>
   </div>
@@ -35,15 +62,14 @@ import { useImmersionLabStore } from "@/stores/store-IL";
 import {
   Viewer,
   DefaultViewerParams,
+  SpeckleLoader,
   CameraController,
   SelectionExtension,
-  IViewer,
+  UrlHelper,
 } from "@speckle/viewer";
-import ObjectLoader from "@speckle/objectloader";
 import * as THREE from "three";
 
-/// <reference types="@types/google.maps" />
-
+// Props definition
 const props = defineProps({
   selectedProject: {
     type: Object,
@@ -65,57 +91,114 @@ const props = defineProps({
 
 const store = useImmersionLabStore();
 
-// Ensure TypeScript recognizes the google namespace
-/// <reference types="google.maps" />
+// Refs and state variables
 const googleMap = ref<{ map?: google.maps.Map } | null>(null);
-
-// Reference to the Speckle Viewer and container
-const viewer = ref<IViewer | null>(null);
+const viewer = ref<Viewer | null>(null);
 const viewerContainer = ref<HTMLElement | null>(null);
 const viewerInitialized = ref(false);
 const isLoadingModel = ref(false);
 const errorMessage = ref<string | null>(null);
-const activeLoads = ref<string[]>([]);
+const loadingModelIds = ref(new Set());
+const forceResetNeeded = ref(false);
+const canvasCheckTimer = ref<number | null>(null);
+const debugInfo = ref<string | null>(null);
 
 // Clean up resources when component is destroyed
 onBeforeUnmount(() => {
+  if (canvasCheckTimer.value) {
+    clearInterval(canvasCheckTimer.value);
+    canvasCheckTimer.value = null;
+  }
   disposeViewer();
 });
 
 // Initialize the viewer when the component is mounted
 onMounted(async () => {
-  console.log("ViewerComponent mounted, waiting for initialization...");
-  // Don't initialize immediately - wait for explicit call from parent
+  console.log("ViewerComponent mounted, initializing viewer...");
+
+  // Wait for DOM to settle
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  await initializeViewer();
+
+  // Start checking if canvas is actually visible/rendered
+  startCanvasChecks();
+
+  if (props.selectedProject) {
+    await loadModels();
+  }
 });
 
-// Safely dispose the viewer to prevent memory leaks and WebGL context issues
+// Function to check if the canvas is properly displayed
+const startCanvasChecks = () => {
+  // Clear any existing timer
+  if (canvasCheckTimer.value) {
+    clearInterval(canvasCheckTimer.value);
+  }
+
+  // Set up interval to check if canvas is properly rendered
+  canvasCheckTimer.value = setInterval(() => {
+    if (!viewerContainer.value) return;
+
+    const canvas = viewerContainer.value.querySelector("canvas");
+    if (!canvas) {
+      console.warn("Canvas element not found in viewer container");
+      debugInfo.value = "Not found";
+      forceResetNeeded.value = true;
+      return;
+    }
+
+    // Check if canvas has proper dimensions and is visible
+    const canvasStyle = window.getComputedStyle(canvas);
+    debugInfo.value = `${canvas.width}x${canvas.height} | ${canvasStyle.position} | Z:${canvasStyle.zIndex}`;
+
+    if (canvas.width === 0 || canvas.height === 0) {
+      console.warn("Canvas has zero width/height, needs reset");
+      forceResetNeeded.value = true;
+    }
+
+    if (canvasStyle.display === "none" || canvasStyle.visibility === "hidden") {
+      console.warn("Canvas is hidden, needs reset");
+      forceResetNeeded.value = true;
+    }
+
+    // Check if viewer is initialized but not showing content
+    if (viewerInitialized.value && forceResetNeeded.value) {
+      console.log("Forcing viewer reset due to detected issues");
+      reinitializeViewer();
+      forceResetNeeded.value = false;
+    }
+  }, 2000); // Check every 2 seconds
+};
+
+// Add a forced re-initialization method
+const reinitializeViewer = async () => {
+  console.log("Forcing viewer re-initialization...");
+  await disposeViewer();
+  await nextTick();
+
+  // Ensure container is ready
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  const success = await initializeViewer();
+
+  if (success && props.selectedProject) {
+    console.log("Reloading models after forced re-initialization");
+    await loadModels();
+  }
+};
+
+// Safely dispose the viewer to prevent memory leaks
 const disposeViewer = async () => {
   try {
-    // First clear any loading operations
-    activeLoads.value = [];
-
     if (viewer.value) {
-      // Try to safely unload objects first without calling problematic methods
-      try {
-        // Clear the scene using a safer approach
-        if (viewer.value.scene) {
-          console.log("Clearing viewer scene objects directly");
-          while (viewer.value.scene.children.length > 0) {
-            const child = viewer.value.scene.children[0];
-            viewer.value.scene.remove(child);
-            if (child.dispose) child.dispose();
-          }
-        }
-      } catch (err) {
-        console.warn("Error clearing scene:", err);
+      console.log("Disposing viewer instance...");
+
+      // Clean up resize observer if it exists
+      if (viewer.value.userData?.resizeObserver) {
+        viewer.value.userData.resizeObserver.disconnect();
       }
 
-      // Now try to dispose the viewer
-      if (typeof viewer.value.dispose === "function") {
-        console.log("Disposing viewer instance...");
-        await viewer.value.dispose();
-      }
-
+      await viewer.value.dispose();
       viewer.value = null;
       viewerInitialized.value = false;
     }
@@ -130,13 +213,8 @@ watch(
   (newColor) => {
     if (viewerInitialized.value && viewer.value) {
       try {
-        if (
-          viewer.value &&
-          typeof viewer.value.setBackgroundColor === "function"
-        ) {
-          viewer.value.setBackgroundColor(new THREE.Color(newColor));
-          console.log("Background color updated to:", newColor);
-        }
+        viewer.value.setBackgroundColor(new THREE.Color(newColor));
+        console.log("Background color updated to:", newColor);
       } catch (error) {
         console.warn("Could not update background color:", error);
       }
@@ -148,47 +226,26 @@ watch(
 watch(
   () => props.selectedDesignOption,
   async (newOption) => {
-    console.log(
-      `Design option changed to: ${newOption}, reloading models if needed`
-    );
+    console.log(`Design option changed to: ${newOption}, reloading models`);
     if (props.selectedProject && viewerInitialized.value) {
       await loadModels();
     }
   }
 );
 
-// Watch for changes in design options structure to update the viewer
+// Watch for changes in design options to update the viewer
 watch(
   () => props.designOptions,
-  async (newOptions, oldOptions) => {
-    console.log("Design options changed, checking for model changes");
-
-    // Only reload if there's an actual change in the models
-    const oldOption1 = oldOptions?.Option1?.length
-      ? oldOptions.Option1[0]?.id
-      : null;
-    const oldOption2 = oldOptions?.Option2?.length
-      ? oldOptions.Option2[0]?.id
-      : null;
-    const newOption1 = newOptions?.Option1?.length
-      ? newOptions.Option1[0]?.id
-      : null;
-    const newOption2 = newOptions?.Option2?.length
-      ? newOptions.Option2[0]?.id
-      : null;
-
-    if (oldOption1 !== newOption1 || oldOption2 !== newOption2) {
-      console.log("Model assignments changed, reloading models");
-      if (props.selectedProject && viewerInitialized.value) {
-        await loadModels();
-      }
+  async () => {
+    console.log("Design options changed, reloading models");
+    if (props.selectedProject && viewerInitialized.value) {
+      await loadModels();
     }
   },
   { deep: true }
 );
 
 const initializeViewer = async () => {
-  // Return early if already in the process of initializing or no container exists
   if (!viewerContainer.value) {
     console.log("Viewer container not available");
     return null;
@@ -203,73 +260,109 @@ const initializeViewer = async () => {
   errorMessage.value = null;
 
   try {
-    // Dispose existing viewer if present as a precaution
     await disposeViewer();
-
-    // Wait for DOM update
     await nextTick();
 
-    // Make sure the container has dimensions and is visible
-    if (viewerContainer.value) {
-      // Make sure container is visible
-      viewerContainer.value.style.visibility = "visible";
-      viewerContainer.value.style.display = "block";
-      viewerContainer.value.style.height = "500px"; // Set explicit height
-      viewerContainer.value.style.width = "100%";
-      viewerContainer.value.style.position = "relative"; // Ensure positioning context
-      viewerContainer.value.style.zIndex = "10"; // Ensure visibility
-
-      console.log("Viewer container dimensions:", {
-        width: viewerContainer.value.clientWidth,
-        height: viewerContainer.value.clientHeight,
-        visibility: getComputedStyle(viewerContainer.value).visibility,
-        display: getComputedStyle(viewerContainer.value).display,
-      });
+    // Clear container of any leftover elements
+    while (viewerContainer.value.firstChild) {
+      viewerContainer.value.removeChild(viewerContainer.value.firstChild);
     }
 
-    if (
-      !viewerContainer.value.clientWidth ||
-      !viewerContainer.value.clientHeight
-    ) {
-      console.warn("Viewer container has no dimensions. Setting minimum size.");
-      viewerContainer.value.style.minHeight = "500px";
-      viewerContainer.value.style.minWidth = "100%";
-    }
-
-    console.log("Creating new viewer instance...");
-    // Create viewer parameters with proper type
+    // Configure viewer parameters
     const viewerParams = {
       ...DefaultViewerParams,
       backgroundColor: new THREE.Color(props.viewerBackgroundColor),
-      verbose: true, // Enable verbose logging
-      showStats: true, // Show stats panel (FPS, etc.)
+      verbose: true,
+      showStats: true,
+      renderer: {
+        antialias: true,
+        alpha: true,
+      },
     };
 
-    console.log("Initializing viewer with container:", viewerContainer.value);
+    // Create and initialize viewer
+    console.log("Creating new viewer instance...");
     const viewerInstance = new Viewer(viewerContainer.value, viewerParams);
-
-    // Initialize viewer and wait for it to complete
     await viewerInstance.init();
-
-    // Set the viewer reference after successful initialization
     viewer.value = markRaw(viewerInstance);
 
-    // Add required extensions
+    // Check if canvas was created
+    const canvas = viewerContainer.value.querySelector("canvas");
+    if (!canvas) {
+      console.error("Canvas was not created during initialization");
+      throw new Error("Canvas element not found after viewer init");
+    }
+
+    // Ensure canvas has correct style and z-index
+    canvas.style.position = "absolute";
+    canvas.style.top = "0";
+    canvas.style.left = "0";
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
+    canvas.style.zIndex = "2";
+    canvas.style.display = "block";
+
+    debugInfo.value = `Created: ${canvas.width}x${canvas.height}`;
+
+    // Add essential extensions
     viewer.value.createExtension(CameraController);
     viewer.value.createExtension(SelectionExtension);
 
-    // Mark as initialized
+    // Add a resize handler to ensure viewer stays properly sized
+    const resizeObserver = new ResizeObserver(() => {
+      if (viewer.value && viewerContainer.value) {
+        try {
+          console.log("Container resized, updating viewer");
+          viewer.value.resize(
+            viewerContainer.value.clientWidth,
+            viewerContainer.value.clientHeight
+          );
+
+          // Force render to update after resize
+          if (
+            viewer.value.renderer &&
+            viewer.value.scene &&
+            viewer.value.camera
+          ) {
+            viewer.value.renderer.render(
+              viewer.value.scene,
+              viewer.value.camera
+            );
+          }
+        } catch (e) {
+          console.warn("Error during resize:", e);
+        }
+      }
+    });
+
+    resizeObserver.observe(viewerContainer.value);
+
+    // Store the observer reference to disconnect it later
+    viewer.value.userData = {
+      ...viewer.value.userData,
+      resizeObserver,
+    };
+
     viewerInitialized.value = true;
+    forceResetNeeded.value = false;
     console.log("Viewer initialized successfully");
+
+    // Force initial resize
+    if (viewerContainer.value) {
+      viewer.value.resize(
+        viewerContainer.value.clientWidth,
+        viewerContainer.value.clientHeight
+      );
+
+      // Trigger a render to make sure canvas is updated
+      if (viewer.value.renderer && viewer.value.scene && viewer.value.camera) {
+        viewer.value.renderer.render(viewer.value.scene, viewer.value.camera);
+      }
+    }
 
     return viewer.value;
   } catch (error) {
     console.error("Error initializing Speckle Viewer:", error);
-    console.error("Error details:", {
-      message: (error as Error).message,
-      stack: (error as Error).stack,
-      name: (error as Error).name,
-    });
     errorMessage.value =
       "Failed to initialize 3D viewer. Please try refreshing the page.";
     viewerInitialized.value = false;
@@ -277,247 +370,6 @@ const initializeViewer = async () => {
   }
 };
 
-// Updated model loading function to use Projects and Models instead of Streams and Objects
-const loadModelFromSpeckle = async (projectId: string, modelId: string) => {
-  const loadId = `${projectId}-${modelId}-${Date.now()}`;
-  activeLoads.value.push(loadId);
-
-  try {
-    console.log(`Loading model: projectId=${projectId}, modelId=${modelId}`);
-    errorMessage.value = null;
-    isLoadingModel.value = true;
-
-    if (!viewer.value) {
-      console.error("Viewer not initialized");
-      errorMessage.value = "Viewer not initialized";
-      return false;
-    }
-
-    // Try to load the Speckle model using Project/Model endpoints
-    try {
-      console.log("Initializing model loader...");
-
-      // Create a loader for the specific model with corrected URL format
-      const serverUrl = "https://app.speckle.systems";
-
-      // First, try to get the token from the store
-      const token = store.speckle?.token;
-
-      if (!token) {
-        console.warn(
-          "No authentication token available, model fetching may fail"
-        );
-        errorMessage.value = "Authentication required to load this model";
-        return false;
-      }
-
-      // CORRECTION: Use 'projects' instead of 'streams' and 'models' instead of 'objects'
-      // Create a custom loader using fetch directly to handle the API correctly
-      console.log(
-        `Attempting to load from: ${serverUrl}/api/projects/${projectId}/models/${modelId}`
-      );
-
-      try {
-        // First attempt: Try to fetch via direct API request instead of ObjectLoader
-        const response = await fetch(
-          `${serverUrl}/api/projects/${projectId}/models/${modelId}/objects`,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              Accept: "application/json",
-            },
-          }
-        );
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const modelData = await response.json();
-        console.log("Model data fetched successfully:", modelData);
-
-        if (modelData && viewer.value) {
-          // If we have object data, try to convert and load it
-          try {
-            // Use the Speckle viewer to load the model data
-            if (modelData.objects) {
-              const objects = Array.isArray(modelData.objects)
-                ? modelData.objects
-                : [modelData.objects];
-
-              for (const obj of objects) {
-                await viewer.value.loadObject(obj);
-              }
-
-              console.log("Model added to viewer successfully");
-
-              // Center camera on loaded object
-              if (viewer.value.cameraHandler) {
-                viewer.value.cameraHandler.fitCameraToScene();
-              }
-
-              return true;
-            } else {
-              console.warn("Model data doesn't contain objects property");
-            }
-          } catch (viewerError) {
-            console.error("Error adding model data to viewer:", viewerError);
-          }
-        }
-      } catch (directApiError) {
-        console.error("Error with direct API approach:", directApiError);
-
-        // Fallback to ObjectLoader with corrected parameters
-        try {
-          console.log("Trying fallback approach with ObjectLoader...");
-
-          // Try using ObjectLoader but with corrected paths
-          const objectLoader = new ObjectLoader({
-            serverUrl: serverUrl,
-            token: token,
-            // Try using project ID as stream ID and model ID as object ID
-            streamId: projectId,
-            objectId: modelId,
-            options: {
-              enableCaching: false, // Disable cache to force new fetch
-              fullyTraverseArrays: true,
-            },
-          });
-
-          const obj = await objectLoader.getRootObject();
-
-          if (obj && viewer.value) {
-            console.log(
-              "Model loaded successfully via fallback ObjectLoader:",
-              obj
-            );
-
-            // Try to add the object to the viewer
-            await viewer.value.loadObject(obj);
-            console.log("Model added to viewer successfully");
-
-            // Center camera on loaded object
-            if (viewer.value.cameraHandler) {
-              viewer.value.cameraHandler.fitCameraToScene();
-            }
-
-            return true;
-          }
-        } catch (loaderError: any) {
-          // Handle fallback errors
-          console.error(`Fallback ObjectLoader also failed:`, loaderError);
-        }
-      }
-
-      // If we reach here, create a placeholder for the failed model
-      console.warn("All loading approaches failed, creating placeholder");
-      try {
-        if (viewer.value && viewer.value.scene) {
-          const placeholderGeometry = new THREE.BoxGeometry(15, 15, 15);
-          const placeholderMaterial = new THREE.MeshBasicMaterial({
-            color: 0xff0000,
-            wireframe: true,
-          });
-          const placeholderMesh = new THREE.Mesh(
-            placeholderGeometry,
-            placeholderMaterial
-          );
-          placeholderMesh.position.set(0, 0, 0);
-          viewer.value.scene.add(placeholderMesh);
-
-          // Create a small text label to indicate model ID
-          const textGeometry = new THREE.BoxGeometry(20, 3, 1);
-          const textMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
-          const textMesh = new THREE.Mesh(textGeometry, textMaterial);
-          textMesh.position.set(0, 20, 0);
-          viewer.value.scene.add(textMesh);
-
-          console.log("Added placeholder for failed model load");
-
-          errorMessage.value = `Could not load model '${modelId}'. Using API path: /api/projects/${projectId}/models/${modelId}`;
-
-          if (viewer.value.cameraHandler) {
-            viewer.value.cameraHandler.fitCameraToObjects([placeholderMesh]);
-          }
-
-          return true; // We're returning true because we at least showed something
-        }
-      } catch (placeholderError) {
-        console.error("Failed to create placeholder:", placeholderError);
-      }
-    } catch (error) {
-      console.error("General error in model loading:", error);
-    }
-
-    // Last resort - create a basic test cube
-    try {
-      if (viewer.value && viewer.value.scene) {
-        const testCubeGeometry = new THREE.BoxGeometry(10, 10, 10);
-        const testCubeMaterial = new THREE.MeshBasicMaterial({
-          color: 0x00ff00,
-          wireframe: true,
-        });
-        const testCube = new THREE.Mesh(testCubeGeometry, testCubeMaterial);
-        viewer.value.scene.add(testCube);
-        console.log("Added test cube to scene (fallback)");
-
-        if (viewer.value.cameraHandler) {
-          testCube.position.set(0, 0, 0);
-          viewer.value.cameraHandler.fitCameraToObjects([testCube]);
-        }
-
-        return true;
-      }
-    } catch (cubeError) {
-      console.error("Error adding test cube:", cubeError);
-    }
-
-    return false;
-  } catch (error) {
-    console.error("Error in loadModelFromSpeckle:", error);
-    errorMessage.value = "Failed to load model from Speckle";
-    return false;
-  } finally {
-    // Clean up
-    activeLoads.value = activeLoads.value.filter((id) => id !== loadId);
-    isLoadingModel.value = false;
-  }
-};
-
-// Additional helper function to check model existence
-const validateSpeckleModel = async (projectId: string, modelId: string) => {
-  try {
-    const token = store.speckle?.token;
-    if (!token) return false;
-
-    const serverUrl = "https://app.speckle.systems";
-
-    // Check if model exists using API
-    const checkResponse = await fetch(
-      `${serverUrl}/api/projects/${projectId}/models/${modelId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-        },
-      }
-    );
-
-    if (checkResponse.ok) {
-      const modelInfo = await checkResponse.json();
-      console.log("Model validation succeeded:", modelInfo);
-      return true;
-    } else {
-      console.warn(`Model validation failed: HTTP ${checkResponse.status}`);
-      return false;
-    }
-  } catch (error) {
-    console.error("Error validating model:", error);
-    return false;
-  }
-};
-
-// Update loadModels function to use model validation
 const loadModels = async () => {
   console.log("loadModels called");
 
@@ -526,7 +378,6 @@ const loadModels = async () => {
     return;
   }
 
-  // Ensure viewer is initialized
   if (!viewer.value) {
     console.log("Viewer not initialized, initializing now");
     const viewerInstance = await initializeViewer();
@@ -537,30 +388,26 @@ const loadModels = async () => {
     }
   }
 
+  let successfulLoads = new Set(); // Track unique models that loaded successfully
+  const attemptedUrls = new Set(); // Track URLs that have been attempted to avoid duplicates
+  loadingModelIds.value = new Set(); // Reset the loading model IDs
+
   try {
-    console.log("Clearing existing objects before loading new ones");
-    // Clear existing objects from viewer - use safer method
-    if (viewer.value && viewer.value.scene) {
-      // Remove all objects from the scene except cameras and lights
-      const objectsToRemove = [];
-      viewer.value.scene.traverse((object) => {
-        if (
-          !(object instanceof THREE.Camera) &&
-          !(object instanceof THREE.Light) &&
-          !(object === viewer.value.scene)
-        ) {
-          objectsToRemove.push(object);
-        }
-      });
+    isLoadingModel.value = true;
+    errorMessage.value = null;
 
-      for (const obj of objectsToRemove) {
-        viewer.value.scene.remove(obj);
-        if (obj.dispose) obj.dispose();
+    // Clear existing objects using the proper API method
+    if (viewer.value) {
+      console.log("Clearing existing objects before loading new ones");
+      try {
+        await viewer.value.unloadAll();
+        console.log("Scene cleared successfully");
+      } catch (resetError) {
+        console.error("Error clearing scene:", resetError);
       }
-
-      console.log(`Removed ${objectsToRemove.length} objects from scene`);
     }
 
+    // Get the models for the selected design option
     const modelsToLoad =
       props.selectedDesignOption === "Both"
         ? [...props.designOptions.Option1, ...props.designOptions.Option2]
@@ -569,105 +416,312 @@ const loadModels = async () => {
           ] || [];
 
     console.log(
-      `Loading ${modelsToLoad.length} models for option: ${props.selectedDesignOption}`,
-      modelsToLoad
+      `Loading ${modelsToLoad.length} models for option: ${props.selectedDesignOption}`
     );
 
-    let loadedAnyModel = false;
-
-    // If we have no models to load but the viewer is active, add a test object so user sees something
-    if (modelsToLoad.length === 0 && viewer.value) {
-      console.log("No models to load, adding placeholder test object");
-
-      const placeholderGeometry = new THREE.BoxGeometry(20, 20, 20);
-      const placeholderMaterial = new THREE.MeshBasicMaterial({
-        color: 0x0088ff,
-        wireframe: true,
-      });
-      const placeholderMesh = new THREE.Mesh(
-        placeholderGeometry,
-        placeholderMaterial
-      );
-
-      try {
-        if (viewer.value.scene) {
-          viewer.value.scene.add(placeholderMesh);
-          placeholderMesh.position.set(0, 0, 0);
-
-          // Add text to indicate no models selected
-          const textMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-          const cubeGeom = new THREE.BoxGeometry(25, 5, 1);
-          const textMesh = new THREE.Mesh(cubeGeom, textMaterial);
-          textMesh.position.set(0, 25, 0);
-          viewer.value.scene.add(textMesh);
-
-          errorMessage.value =
-            "No models selected. Please select a model from the project details.";
-          loadedAnyModel = true;
-
-          if (viewer.value.cameraHandler) {
-            viewer.value.cameraHandler.fitCameraToObjects([placeholderMesh]);
-          }
-        }
-      } catch (err) {
-        console.error("Error adding placeholder object:", err);
-      }
+    if (modelsToLoad.length === 0) {
+      console.log("No models to load");
+      errorMessage.value =
+        "No models selected. Please select a model from the project details.";
+      createPlaceholderModel(viewer.value);
+      return;
     }
 
+    const token = store.speckle?.token || "";
+    const serverUrl = "https://app.speckle.systems";
+    let loadedObjectsCount = 0;
+
+    // Load each model using UrlHelper and SpeckleLoader
     for (const model of modelsToLoad) {
       if (!model || !model.id) {
-        console.warn("Skipping model due to missing ID:", model);
+        console.warn("Skipping model due to missing ID");
         continue;
       }
 
+      const modelId = model.id;
+      const projectId = props.selectedProject.id;
+
+      // Skip if we're already loading this model
+      if (loadingModelIds.value.has(modelId)) {
+        console.log(`Model ${modelId} is already being loaded, skipping`);
+        continue;
+      }
+
+      // Mark this model as being loaded
+      loadingModelIds.value.add(modelId);
+
+      console.log(`Loading model: ${modelId} from project: ${projectId}`);
+
       try {
-        const modelId = model.id;
-        const projectId = props.selectedProject.id;
+        const modelUrl = `${serverUrl}/projects/${projectId}/models/${modelId}`;
+        const urls = await UrlHelper.getResourceUrls(modelUrl).catch((err) => {
+          console.error(
+            `Error getting resource URLs for model ${modelId}:`,
+            err
+          );
+          return [];
+        });
 
-        console.log(`Loading model: ${modelId} from project: ${projectId}`);
+        if (!urls || urls.length === 0) {
+          console.warn(`No resource URLs found for model: ${modelId}`);
+          const directObjectUrl = `${serverUrl}/streams/${projectId}/objects/${modelId}`;
+          console.log(`Trying direct object URL: ${directObjectUrl}`);
 
-        // Validate model before loading
-        const modelExists = await validateSpeckleModel(projectId, modelId);
+          if (viewer.value && viewer.value.getWorldTree) {
+            try {
+              const loader = new SpeckleLoader(
+                viewer.value.getWorldTree(),
+                directObjectUrl,
+                token
+              );
 
-        if (!modelExists) {
-          console.warn(`Model ${modelId} not found, skipping load attempt`);
-          errorMessage.value = `Model ${modelId} not found in project ${projectId}`;
+              try {
+                if (loader && typeof loader.removeAllListeners === "function") {
+                  loader.removeAllListeners("load-progress");
+                }
+              } catch (listenerErr) {
+                console.warn(
+                  "Could not remove listeners, continuing anyway:",
+                  listenerErr
+                );
+              }
+
+              console.log("Loading with direct object URL");
+              await viewer.value.loadObject(loader, true);
+              console.log(`Successfully loaded direct object: ${modelId}`);
+              successfulLoads.add(modelId);
+              loadedObjectsCount++;
+            } catch (directErr) {
+              console.error(
+                `Failed to load model with direct URL: ${directErr}`
+              );
+            }
+          }
           continue;
         }
 
-        // Use our updated loading function
-        const success = await loadModelFromSpeckle(projectId, modelId);
+        let modelLoaded = false;
+        const urlsToTry = urls.slice(0, 2);
 
-        if (success) {
-          loadedAnyModel = true;
-          console.log(`Successfully loaded model: ${modelId}`);
-        } else {
-          console.error(`All loading approaches failed for model ${modelId}`);
+        for (const url of urlsToTry) {
+          if (attemptedUrls.has(url)) {
+            console.log(`Skipping already attempted URL: ${url}`);
+            continue;
+          }
+
+          attemptedUrls.add(url);
+
+          if (!viewer.value || !viewer.value.getWorldTree) {
+            console.error("Viewer or WorldTree not available");
+            continue;
+          }
+
+          try {
+            const loader = new SpeckleLoader(
+              viewer.value.getWorldTree(),
+              url,
+              token
+            );
+
+            if (!loader) {
+              console.error("Failed to create loader for URL:", url);
+              continue;
+            }
+
+            try {
+              if (loader && typeof loader.removeAllListeners === "function") {
+                loader.removeAllListeners("load-progress");
+              }
+            } catch (listenerErr) {
+              console.warn(
+                "Could not remove listeners, continuing anyway:",
+                listenerErr
+              );
+            }
+
+            console.log(`Loading object from URL: ${url}`);
+
+            let loadTimedOut = false;
+            const timeoutId = setTimeout(() => {
+              loadTimedOut = true;
+              console.warn(`Load timeout for URL: ${url}`);
+            }, 30000);
+
+            try {
+              await Promise.race([
+                viewer.value.loadObject(loader, true),
+                new Promise((_, reject) =>
+                  setTimeout(
+                    () => reject(new Error("Operation timed out")),
+                    30000
+                  )
+                ),
+              ]);
+
+              clearTimeout(timeoutId);
+
+              if (!loadTimedOut) {
+                console.log(`Successfully loaded resource from URL: ${url}`);
+                successfulLoads.add(modelId);
+                loadedObjectsCount++;
+                modelLoaded = true;
+                break;
+              }
+            } catch (loadError) {
+              clearTimeout(timeoutId);
+              console.error(`Error loading from URL ${url}:`, loadError);
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, 300));
+          } catch (loadErr) {
+            console.error(`Error creating loader for URL ${url}:`, loadErr);
+          }
         }
-      } catch (modelError) {
-        console.error(`Error processing model ${model.id}:`, modelError);
+
+        if (!modelLoaded) {
+          console.warn(`Failed to load any resources for model: ${modelId}`);
+        }
+      } catch (err) {
+        console.error(`Error loading model ${modelId}:`, err);
+      } finally {
+        loadingModelIds.value.delete(modelId);
       }
     }
 
-    if (loadedAnyModel) {
-      try {
-        console.log("Models loaded, positioning camera...");
-        if (viewer.value && viewer.value.cameraHandler) {
-          viewer.value.cameraHandler.fitCameraToScene();
-        }
-      } catch (cameraErr) {
-        console.warn("Error positioning camera:", cameraErr);
-      }
-    } else {
-      console.warn(
-        "No models were loaded successfully. Cannot position camera."
-      );
+    if (successfulLoads.size === 0) {
+      console.warn("No objects were loaded successfully, creating placeholder");
       errorMessage.value =
-        "No models could be loaded. Please try a different project or model.";
+        "Failed to load any models. Please check your selection.";
+      createPlaceholderModel(viewer.value);
+    } else {
+      console.log(
+        `Successfully loaded ${successfulLoads.size} unique models (${loadedObjectsCount} total objects)`
+      );
+      errorMessage.value = null;
+
+      await fitCameraToScene();
+      addGridHelper();
     }
   } catch (err) {
     console.error("Error in loadModels:", err);
     errorMessage.value = "Failed to load models. Please try again.";
+
+    if (viewer.value) {
+      createPlaceholderModel(viewer.value);
+    }
+  } finally {
+    isLoadingModel.value = false;
+    loadingModelIds.value.clear();
+  }
+};
+
+const fitCameraToScene = async () => {
+  if (!viewer.value || !viewer.value.cameraController) return;
+
+  console.log("Attempting to fit camera to scene");
+
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
+  try {
+    viewer.value.cameraController.fitToScene();
+    console.log("Initial camera fit completed");
+  } catch (e) {
+    console.warn("Initial camera fit failed:", e);
+  }
+
+  const retryDelays = [100, 500, 1000, 2000];
+
+  for (const delay of retryDelays) {
+    await new Promise((resolve) => setTimeout(resolve, delay));
+
+    try {
+      console.log(`Retrying camera fit after ${delay}ms`);
+      viewer.value.cameraController.fitToScene();
+
+      if (delay > 500) {
+        const camera = viewer.value.cameraController.camera;
+        if (camera && camera.position) {
+          console.log("Adjusting camera position for better visibility");
+          camera.position.multiplyScalar(1.2);
+          camera.updateProjectionMatrix();
+
+          if (viewer.value.renderer) {
+            viewer.value.renderer.render(viewer.value.scene, camera);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Error during camera fit retry:", e);
+    }
+  }
+};
+
+const addGridHelper = () => {
+  if (!viewer.value || !viewer.value.scene) return;
+
+  try {
+    const existingGrid = viewer.value.scene.children.find(
+      (child) => child.name === "gridHelper"
+    );
+    if (existingGrid) {
+      viewer.value.scene.remove(existingGrid);
+    }
+
+    const gridHelper = new THREE.GridHelper(100, 100, 0x888888, 0xcccccc);
+    gridHelper.name = "gridHelper";
+    gridHelper.position.y = -0.01;
+    viewer.value.scene.add(gridHelper);
+
+    console.log("Added grid helper for orientation");
+  } catch (e) {
+    console.warn("Failed to add grid helper:", e);
+  }
+};
+
+const createPlaceholderModel = (viewerInstance: Viewer) => {
+  try {
+    if (viewerInstance && viewerInstance.scene) {
+      const geometry = new THREE.BoxGeometry(10, 10, 10);
+      const material = new THREE.MeshBasicMaterial({
+        color: 0xff6600,
+        wireframe: true,
+        opacity: 0.8,
+        transparent: true,
+      });
+      const cube = new THREE.Mesh(geometry, material);
+
+      cube.position.set(0, 5, 0);
+      viewerInstance.scene.add(cube);
+      console.log("Added placeholder model");
+
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+      viewerInstance.scene.add(ambientLight);
+
+      const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+      dirLight.position.set(10, 20, 10);
+      viewerInstance.scene.add(dirLight);
+
+      if (viewerInstance.cameraController) {
+        viewerInstance.cameraController.fitToScene();
+
+        setTimeout(() => {
+          if (viewerInstance.cameraController) {
+            try {
+              const camera = viewerInstance.cameraController.camera;
+              if (camera && camera.position) {
+                camera.position.multiplyScalar(1.5);
+                camera.updateProjectionMatrix();
+              }
+              viewerInstance.cameraController.fitToScene();
+            } catch (e) {
+              console.warn("Error adjusting placeholder camera:", e);
+            }
+          }
+        }, 100);
+      }
+    }
+  } catch (error) {
+    console.error("Error creating placeholder model:", error);
   }
 };
 
@@ -681,11 +735,56 @@ const setMapPosition = (lat: number, lng: number) => {
   }
 };
 
-// Expose the necessary functions to the parent component
 defineExpose({
   initializeViewer,
   loadModels,
   setMapPosition,
   disposeViewer,
+  reinitializeViewer,
 });
 </script>
+
+<style scoped>
+#viewer-container {
+  isolation: isolate;
+  background: #f0f0f0;
+  position: relative;
+  min-height: 400px;
+  display: block; /* Force block display */
+  overflow: visible;
+}
+
+#viewer-container canvas {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+  z-index: 2 !important;
+  transform: translateZ(0);
+  pointer-events: auto !important;
+}
+
+/* Force hardware acceleration */
+#viewer-container,
+#viewer-container * {
+  -webkit-transform: translateZ(0);
+  -moz-transform: translateZ(0);
+  -ms-transform: translateZ(0);
+  transform: translateZ(0);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+.animate-pulse {
+  animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+</style>
