@@ -7,7 +7,11 @@
         id="viewer-container"
         ref="viewerContainer"
         class="w-full h-full rounded-lg shadow-inner overflow-hidden"
-        style="z-index: 1; position: relative; background: #f0f0f0"
+        :style="{
+          zIndex: '1',
+          position: 'relative',
+          background: containerBackgroundColor,
+        }"
       >
         <!-- Empty fallback element for when canvas isn't rendered properly -->
         <div
@@ -56,7 +60,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onBeforeUnmount, watch, onMounted, nextTick, markRaw } from "vue";
+import {
+  ref,
+  onBeforeUnmount,
+  watch,
+  onMounted,
+  nextTick,
+  markRaw,
+  computed,
+} from "vue";
 import GoogleMap from "@/components/GoogleMap.vue";
 import { useImmersionLabStore } from "@/stores/store-IL";
 import {
@@ -86,6 +98,10 @@ const props = defineProps({
   viewerBackgroundColor: {
     type: String,
     default: "#ffffff",
+  },
+  containerBackgroundColor: {
+    type: String,
+    default: "#f0f0f0",
   },
 });
 
@@ -219,6 +235,14 @@ watch(
         console.warn("Could not update background color:", error);
       }
     }
+  }
+);
+
+// Watch for changes in the container background color
+watch(
+  () => props.containerBackgroundColor,
+  (newColor) => {
+    console.log("Container background color updated to:", newColor);
   }
 );
 
@@ -747,23 +771,10 @@ defineExpose({
 <style scoped>
 #viewer-container {
   isolation: isolate;
-  background: #f0f0f0;
   position: relative;
   min-height: 400px;
   display: block; /* Force block display */
   overflow: visible;
-}
-
-#viewer-container canvas {
-  position: absolute !important;
-  top: 0 !important;
-  left: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
-  display: block !important;
-  z-index: 2 !important;
-  transform: translateZ(0);
-  pointer-events: auto !important;
 }
 
 /* Force hardware acceleration */
