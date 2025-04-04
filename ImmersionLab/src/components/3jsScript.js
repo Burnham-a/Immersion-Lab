@@ -31,7 +31,10 @@ export default function initializeScene(canvas) {
   };
 
   const dracoLoader = new DRACOLoader();
-  dracoLoader.setDecoderPath("/draco/");
+  // Use CDN path for DRACO decoder for better compatibility
+  dracoLoader.setDecoderPath(
+    "https://www.gstatic.com/draco/versioned/decoders/1.5.6/"
+  );
 
   const gltfLoader = new GLTFLoader();
   gltfLoader.setDRACOLoader(dracoLoader);
@@ -39,69 +42,136 @@ export default function initializeScene(canvas) {
   let model;
   let collections = [];
 
+  // Load the model from the public folder
+  // Note: You need to place the Oxford Tile folder in your project's public directory
+  console.log("Attempting to load model...");
   gltfLoader.load(
-    "/src/assets/Oxford Tile/glTF/Oxford Tile.glb",
+    "/Oxford Tile/glTF/Oxford Tile.glb", // Path relative to public folder
     (gltf) => {
       model = gltf.scene;
+      console.log("Model loaded successfully!");
       scene.add(model);
 
-      model.traverse((child) => {
-        if (child.type === "Group" && !collections.includes(child.name)) {
-          collections.push(child.name);
+      // Setup model materials and controls
+      setupModelAfterLoading(model);
+    },
+    (progress) => {
+      if (progress.total > 0) {
+        console.log(
+          `Loading model: ${(progress.loaded / progress.total) * 100}% loaded`
+        );
+      } else {
+        console.log(`Loading model: ${progress.loaded} bytes loaded`);
+      }
+    },
+    (error) => {
+      console.error("Error loading model:", error);
+      console.error("Error details:", error.message);
+
+      // Try alternative paths if the first one fails
+      const alternativePaths = [
+        "/Oxford_Tile.glb",
+        "/assets/Oxford_Tile.glb",
+        "/models/Oxford_Tile.glb",
+      ];
+
+      console.log("Trying alternative paths...");
+      tryLoadingFromAlternatives(alternativePaths, 0);
+    }
+  );
+
+  // Function to try loading from alternative paths
+  function tryLoadingFromAlternatives(paths, index) {
+    if (index >= paths.length) {
+      console.error("All alternative paths failed");
+      return;
+    }
+
+    console.log(`Trying to load from: ${paths[index]}`);
+    gltfLoader.load(
+      paths[index],
+      (gltf) => {
+        model = gltf.scene;
+        console.log(`Model loaded successfully from ${paths[index]}!`);
+        scene.add(model);
+
+        // Setup model materials and controls
+        setupModelAfterLoading(model);
+      },
+      (progress) => {
+        if (progress.total > 0) {
+          console.log(
+            `Alternative loading: ${
+              (progress.loaded / progress.total) * 100
+            }% loaded`
+          );
+        }
+      },
+      (error) => {
+        console.error(`Failed to load from ${paths[index]}:`, error.message);
+        // Try next path
+        tryLoadingFromAlternatives(paths, index + 1);
+      }
+    );
+  }
+
+  // Function to set up model after loading
+  function setupModelAfterLoading(loadedModel) {
+    collections = [];
+    loadedModel.traverse((child) => {
+      if (child.type === "Group" && !collections.includes(child.name)) {
+        collections.push(child.name);
+      }
+    });
+
+    const gui = new GUI();
+    const modelFolder = gui.addFolder("Model Controls");
+
+    const updateMaterials = () => {
+      loadedModel.traverse((child) => {
+        if (child.isMesh) {
+          if (child.parent && child.parent.name === collections[0]) {
+            return;
+          } else if (
+            child.parent &&
+            collections.slice(1).includes(child.parent.name)
+          ) {
+            child.material = new THREE.MeshStandardMaterial({
+              color: params.color2,
+            });
+          } else {
+            child.material = new THREE.MeshStandardMaterial({
+              color: params.color3,
+            });
+          }
         }
       });
+    };
 
-      const gui = new GUI();
-      const modelFolder = gui.addFolder("Model Controls");
+    modelFolder
+      .addColor(params, "color2")
+      .name("Context")
+      .onChange(updateMaterials);
+    modelFolder
+      .addColor(params, "color3")
+      .name("Site")
+      .onChange(updateMaterials);
 
-      const updateMaterials = () => {
-        model.traverse((child) => {
-          if (child.isMesh) {
-            if (child.parent && child.parent.name === collections[0]) {
-              return;
-            } else if (
-              child.parent &&
-              collections.slice(1).includes(child.parent.name)
-            ) {
-              child.material = new THREE.MeshStandardMaterial({
-                color: params.color2,
-              });
-            } else {
-              child.material = new THREE.MeshStandardMaterial({
-                color: params.color3,
-              });
-            }
-          }
-        });
-      };
+    loadedModel.scale.set(0.05, 0.05, 0.05);
 
-      modelFolder
-        .addColor(params, "color2")
-        .name("Context")
-        .onChange(updateMaterials);
-      modelFolder
-        .addColor(params, "color3")
-        .name("Site")
-        .onChange(updateMaterials);
+    updateMaterials();
 
-      model.scale.set(0.05, 0.05, 0.05);
-
-      updateMaterials();
-
-      // Time controls folder under Model Materials
-      const timeFolder = modelFolder.addFolder("Time Controls");
-      timeFolder
-        .add(params, "hour", 0, 23, 1)
-        .name("Hour")
-        .onChange(() => animateSun(clock.elapsedTime));
-      timeFolder
-        .add(params, "minute", 0, 59, 15)
-        .name("Minute")
-        .onChange(() => animateSun(clock.elapsedTime));
-    },
-    undefined,
-    (error) => console.error("Error loading model:", error)
-  );
+    // Time controls folder under Model Materials
+    const timeFolder = modelFolder.addFolder("Time Controls");
+    timeFolder
+      .add(params, "hour", 0, 23, 1)
+      .name("Hour")
+      .onChange(() => animateSun(clock.elapsedTime));
+    timeFolder
+      .add(params, "minute", 0, 59, 15)
+      .name("Minute")
+      .onChange(() => animateSun(clock.elapsedTime));
+  }
 
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(10, 10),
