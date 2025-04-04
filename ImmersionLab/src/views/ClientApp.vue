@@ -15,22 +15,37 @@
       View Project
     </button>
     <div v-if="errorMessage" class="text-red-600 mt-4">{{ errorMessage }}</div>
-    <ClientViewer v-if="projectData" :projectData="projectData" class="mt-6" />
+
+    <ClientDesignSelect
+      v-if="projectData"
+      :projectData="projectData"
+      @option-selected="selectDesignOption"
+      class="mt-6"
+    />
+
+    <ClientViewer
+      v-if="projectData"
+      :projectData="projectData"
+      :selectedDesignOption="selectedDesignOption"
+      class="mt-6"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref } from "vue";
 import ClientViewer from "@/components/ClientViewer.vue";
-import { useStore } from "@/stores/store-IL"; // Import the store
+import ClientDesignSelect from "@/components/ClientDesignSelect.vue";
+import { useImmersionLabStore } from "@/stores/store-IL"; // Import the store
 
 // Define reactive variables
 const projectNumber = ref("");
 const errorMessage = ref(null);
 const projectData = ref(null);
+const selectedDesignOption = ref("Option1");
 
 // Access the store
-const store = useStore();
+const store = useImmersionLabStore();
 
 // Define goToProjectViewer function
 const goToProjectViewer = async () => {
@@ -42,6 +57,12 @@ const goToProjectViewer = async () => {
         console.log("Raw project data from localStorage:", storedData);
         projectData.value = JSON.parse(storedData);
         store.selectedProject = projectData.value; // Save the project data to the store
+
+        // Initialize design option from saved data
+        if (projectData.value.selectedDesignOption) {
+          selectedDesignOption.value = projectData.value.selectedDesignOption;
+        }
+
         errorMessage.value = null;
       } catch (error) {
         errorMessage.value = "Invalid project data format";
@@ -52,6 +73,11 @@ const goToProjectViewer = async () => {
         "Project not found. Please check the project number.";
     }
   }
+};
+
+// Update the selected design option
+const selectDesignOption = (option) => {
+  selectedDesignOption.value = option;
 };
 </script>
 

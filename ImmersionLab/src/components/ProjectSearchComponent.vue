@@ -1,11 +1,9 @@
 <template>
   <div>
     <StreamSearchBar v-model="searchQueryModel" class="w-full" />
-    <p class="text-sm text-gray-500 mt-1">
-      Enter search text or leave empty to see all projects
-    </p>
+
     <p class="text-xs text-gray-400">
-      Total projects: {{ projects.length }} | Filtered projects:
+      Filtered projects:
       {{ filteredProjects.length }}
     </p>
   </div>
@@ -19,7 +17,7 @@
       Loading projects...
     </div>
     <p v-else-if="projects.length === 0" class="text-gray-600">
-      No projects available. Please check your Speckle account.
+      No projects available. Please start typing....
     </p>
     <div v-else-if="filteredProjects.length > 0" class="my-4">
       <StreamGrid

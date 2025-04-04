@@ -17,13 +17,22 @@
       <UserProfileComponent :user="user" @logout="handleLogout" />
 
       <!-- Project Search Component -->
-      <ProjectSearchComponent
-        :projects="projects"
-        :is-loading-projects="isLoadingProjects"
-        :error-message="errorMessage"
-        @search-query-change="updateSearchQuery"
-        @project-selected="handleProjectSelected"
-      />
+      <div>
+        <ProjectSearchComponent
+          :projects="filteredProjects"
+          :is-loading-projects="isLoadingProjects"
+          :error-message="errorMessage"
+          @search-query-change="updateSearchQuery"
+          @project-selected="handleProjectSelected"
+        />
+        <p class="text-sm text-gray-500 mt-2 text-right">
+          {{
+            searchQuery.length > 0
+              ? `Showing ${filteredProjects.length} of ${projects.length} projects`
+              : `Total projects: ${projects.length}`
+          }}
+        </p>
+      </div>
       <br />
 
       <!-- Design Options Component -->
@@ -57,6 +66,8 @@
       <ProjectSaveComponent
         :selected-project="selectedProject"
         :design-options="designOptions"
+        :viewer-background-color="viewerBackgroundColor"
+        :selected-design-option="selectedDesignOption"
       />
     </div>
   </main>
@@ -78,6 +89,7 @@ import DesignOptionsComponent from "@/components/DesignOptionsComponent.vue";
 import ViewerComponent from "@/components/ViewerComponent.vue";
 import ProjectSaveComponent from "@/components/ProjectSaveComponent.vue";
 
+// Add error handling utility
 import { useImmersionLabStore } from "@/stores/store-IL";
 import { StreamGridItemProps } from "@/types/StreamGridItemProps";
 
@@ -112,6 +124,14 @@ const searchQuery = ref("");
 const projects = ref<StreamGridItemProps[]>([]);
 const viewerComponent = ref<InstanceType<typeof ViewerComponent> | null>(null);
 const viewerInitialized = ref(false);
+
+// Add filteredProjects computed property to only show projects when there's a search query
+const filteredProjects = computed(() => {
+  if (!searchQuery.value) return []; // Return empty array when no search query
+  return projects.value.filter((project) =>
+    project.name.toLowerCase().includes(searchQuery.value.toLowerCase())
+  );
+});
 
 // GraphQL Query
 const { executeQuery, data, error } = useQuery({
@@ -186,17 +206,27 @@ const handleProjectSelected = async (project: StreamGridItemProps) => {
   console.log("Project selected:", project);
 
   try {
+    if (!project || !project.id) {
+      console.error("Invalid project data:", project);
+      errorMessage.value = "Invalid project data";
+      return;
+    }
+
     // First reset the current selection to ensure clean state
     designOptions.value = {
       Option1: [],
       Option2: [],
     };
 
-    const models =
-      project.models && project.models.items ? project.models : { items: [] };
+    // Ensure models property is always correctly formatted
+    const models = project.models?.items?.length
+      ? { items: project.models.items }
+      : { items: [] };
 
     selectedProject.value = {
       ...project,
+      name: project.name || "Unnamed Project",
+      id: project.id,
       models: models,
     };
 
@@ -211,6 +241,7 @@ const handleProjectSelected = async (project: StreamGridItemProps) => {
     }
   } catch (err) {
     console.error("Error handling project selection:", err);
+    errorMessage.value = "Error selecting project";
   }
 };
 
@@ -235,34 +266,56 @@ const viewDesignOption = async (option: string) => {
 const addModelToDesignOption = async (model: any, option: string) => {
   console.log(`Adding model to ${option}:`, model);
 
-  // Clone and update the design options
-  const updatedOptions = { ...designOptions.value };
-
-  if (option === "Option1") {
-    updatedOptions.Option1 = [model];
-  } else if (option === "Option2") {
-    updatedOptions.Option2 = [model];
+  // Validate model input
+  if (!model || !model.id || !model.name) {
+    console.error("Invalid model data:", model);
+    errorMessage.value = "Invalid model data provided";
+    return;
   }
 
-  // Update the design options
-  designOptions.value = updatedOptions;
+  try {
+    // Clone and update the design options with validated model
+    const updatedOptions = { ...designOptions.value };
+    const validatedModel = {
+      id: model.id,
+      name: model.name,
+      // Add any other required properties for the model
+    };
 
-  // Set selected option
-  selectedDesignOption.value = option as "Option1" | "Option2" | "Both";
-
-  // Ensure viewer is initialized
-  if (viewerComponent.value) {
-    if (!viewerInitialized.value) {
-      await viewerComponent.value.initializeViewer();
-      viewerInitialized.value = true;
+    if (option === "Option1") {
+      updatedOptions.Option1 = [validatedModel];
+    } else if (option === "Option2") {
+      updatedOptions.Option2 = [validatedModel];
     }
 
-    // No need for setTimeout, directly call loadModels with proper error handling
-    try {
-      await viewerComponent.value.loadModels();
-    } catch (error) {
-      console.error("Error loading models:", error);
+    // Update the design options
+    designOptions.value = updatedOptions;
+
+    // Set selected option
+    selectedDesignOption.value = option as "Option1" | "Option2" | "Both";
+
+    // Ensure viewer is initialized
+    if (viewerComponent.value) {
+      if (!viewerInitialized.value) {
+        await viewerComponent.value.initializeViewer();
+        viewerInitialized.value = true;
+      }
+
+      // Add a small delay to ensure state is updated
+      setTimeout(async () => {
+        try {
+          if (viewerComponent.value) {
+            await viewerComponent.value.loadModels();
+          }
+        } catch (error) {
+          console.error("Error loading models:", error);
+          errorMessage.value = "Failed to load models. Please try again.";
+        }
+      }, 100);
     }
+  } catch (err) {
+    console.error("Error adding model to design option:", err);
+    errorMessage.value = "Failed to add model to design option";
   }
 };
 
@@ -277,7 +330,7 @@ watchEffect(() => {
         description: project.description || "",
         models: project.models || { items: [] },
       }));
-      console.log("Projects updated:", projects.value.length);
+      console.log(`Projects loaded: ${projects.value.length}`);
     }
   } catch (err) {
     console.error("Error processing projects data:", err);

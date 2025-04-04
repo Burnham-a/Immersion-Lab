@@ -1,62 +1,62 @@
 <template>
-  <div>
-    <h1 class="text-3xl font-bold mb-6">Save Project</h1>
+  <div class="project-save-component">
+    <h2 class="text-2xl font-bold mb-4">Save Project Configuration</h2>
 
-    <!-- Project Number Generator & Copy to Clipboard Feature -->
-    <div class="mt-6 flex flex-col items-center">
-      <div class="flex items-center gap-4 mb-4">
-        <input
-          v-model="projectNumber"
-          type="text"
-          placeholder="Enter a project number"
-          class="input-field"
-        />
-        <button
-          @click="generateRandomProjectNumber"
-          class="bg-purple-600 hover:bg-purple-800 text-white font-semibold py-2 px-4 rounded-lg shadow-md"
-        >
-          Generate Number
-        </button>
-        <button
-          @click="copyProjectNumberToClipboard"
-          class="bg-teal-600 hover:bg-teal-800 text-white font-semibold py-2 px-4 rounded-lg shadow-md flex items-center"
-          :class="{ 'bg-green-600': copied }"
-        >
-          <span v-if="!copied">Copy to Clipboard</span>
-          <span v-else>Copied!</span>
-        </button>
+    <div class="flex flex-col gap-4">
+      <div
+        v-if="savedStatus"
+        :class="[
+          'p-4 rounded-md',
+          savedStatus.type === 'success'
+            ? 'bg-green-100 text-green-800'
+            : 'bg-red-100 text-red-800',
+        ]"
+      >
+        {{ savedStatus.message }}
       </div>
-      <br />
+
       <button
         @click="saveProject"
-        :disabled="!projectNumber"
-        class="bg-blue-600 hover:bg-blue-800 text-white font-semibold py-3 px-6 rounded-lg shadow-md"
+        class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+        :disabled="!canSave || isSaving"
       >
-        Save Project
+        {{ isSaving ? "Saving..." : "Save Project Configuration" }}
       </button>
-    </div>
 
-    <!-- Saved Project Notification -->
-    <div
-      v-if="projectSaved"
-      class="mt-4 p-4 bg-green-100 text-green-800 rounded-lg"
-    >
-      Project saved successfully with number:
-      <strong>{{ projectNumber }}</strong>
+      <div
+        v-if="savedProjectInfo"
+        class="text-left border p-4 rounded-md bg-gray-50"
+      >
+        <h3 class="font-bold">Saved Project Information</h3>
+        <p><strong>Project Name:</strong> {{ savedProjectInfo.name }}</p>
+        <p>
+          <strong>Saved At:</strong>
+          {{ new Date(savedProjectInfo.savedAt).toLocaleString() }}
+        </p>
+        <p>
+          <strong>Selected Option:</strong>
+          {{ savedProjectInfo.selectedOption }}
+        </p>
+        <p>
+          <strong>Models in Option 1:</strong>
+          {{ savedProjectInfo.designOptions.Option1.length }}
+        </p>
+        <p>
+          <strong>Models in Option 2:</strong>
+          {{ savedProjectInfo.designOptions.Option2.length }}
+        </p>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
-import { saveProjectToLocalStorage } from "@/utils/projectUtils";
+import { ref, computed, watchEffect } from "vue";
+import {
+  saveProjectToLocalStorage,
+  getProjectFromLocalStorage,
+} from "@/utils/projectUtils";
 
-// Project variables
-const projectNumber = ref("");
-const copied = ref(false);
-const projectSaved = ref(false);
-
-// Define props for the component
 const props = defineProps({
   selectedProject: {
     type: Object,
@@ -64,53 +64,117 @@ const props = defineProps({
   },
   designOptions: {
     type: Object,
-    required: true,
+    default: () => ({ Option1: [], Option2: [] }),
+  },
+  viewerBackgroundColor: {
+    type: String,
+    default: "#ffffff",
+  },
+  selectedDesignOption: {
+    type: String,
+    default: "Option1",
   },
 });
 
-// Generate random project number
-const generateRandomProjectNumber = () => {
-  const prefix = "IL";
-  const year = new Date().getFullYear().toString().slice(-2);
-  const month = (new Date().getMonth() + 1).toString().padStart(2, "0");
-  const randomNum = Math.floor(1000 + Math.random() * 9000); // 4-digit random number
+const isSaving = ref(false);
+const savedStatus = ref<{ type: string; message: string } | null>(null);
+interface SavedProjectInfo {
+  name: string;
+  savedAt: string;
+  selectedOption: string;
+  designOptions: {
+    Option1: any[];
+    Option2: any[];
+  };
+}
 
-  projectNumber.value = `${prefix}-${year}${month}-${randomNum}`;
-};
+const savedProjectInfo = ref<SavedProjectInfo | null>(null);
 
-// Copy project number to clipboard
-const copyProjectNumberToClipboard = () => {
-  if (projectNumber.value) {
-    navigator.clipboard
-      .writeText(projectNumber.value)
-      .then(() => {
-        copied.value = true;
-        setTimeout(() => {
-          copied.value = false;
-        }, 2000);
-      })
-      .catch((err) => {
-        console.error("Failed to copy: ", err);
-      });
+// Check if we can save the project
+const canSave = computed(() => {
+  // Must have a selected project with valid ID
+  if (!props.selectedProject || !props.selectedProject.id) {
+    return false;
   }
-};
 
-// Save the project
-const saveProject = () => {
-  if (projectNumber.value && props.selectedProject) {
-    const projectData = {
-      number: projectNumber.value,
-      project: props.selectedProject,
-      designOptions: props.designOptions,
-      timestamp: new Date().toISOString(),
+  // Must have at least one model in either Option1 or Option2
+  const hasOption1Models =
+    Array.isArray(props.designOptions.Option1) &&
+    props.designOptions.Option1.length > 0;
+  const hasOption2Models =
+    Array.isArray(props.designOptions.Option2) &&
+    props.designOptions.Option2.length > 0;
+
+  return hasOption1Models || hasOption2Models;
+});
+
+// Load previously saved project info if available
+watchEffect(() => {
+  if (props.selectedProject?.id) {
+    try {
+      const savedProject = getProjectFromLocalStorage(props.selectedProject.id);
+      if (savedProject) {
+        savedProjectInfo.value = savedProject;
+      } else {
+        savedProjectInfo.value = null;
+      }
+    } catch (error) {
+      console.error("Error loading saved project:", error);
+      savedProjectInfo.value = null;
+    }
+  } else {
+    savedProjectInfo.value = null;
+  }
+});
+
+// Function to save the project
+const saveProject = async () => {
+  if (!canSave.value) {
+    savedStatus.value = {
+      type: "error",
+      message:
+        "Cannot save: Please select a project and add at least one model to a design option.",
+    };
+    return;
+  }
+
+  isSaving.value = true;
+  savedStatus.value = null;
+
+  try {
+    // Validate project before saving
+    if (
+      !props.selectedProject ||
+      !props.selectedProject.id ||
+      typeof props.selectedProject.id !== "string"
+    ) {
+      throw new Error("Invalid project data. Project must have a valid ID.");
+    }
+
+    // Save the project configuration
+    saveProjectToLocalStorage(props.selectedProject.id, props.designOptions);
+
+    // Update status and refresh saved project info
+    savedStatus.value = {
+      type: "success",
+      message: "Project configuration saved successfully!",
     };
 
-    saveProjectToLocalStorage(projectData);
-    projectSaved.value = true;
-
-    setTimeout(() => {
-      projectSaved.value = false;
-    }, 3000);
+    // Refresh the saved project info
+    const savedProject = getProjectFromLocalStorage(props.selectedProject.id);
+    if (savedProject) {
+      savedProjectInfo.value = savedProject;
+    }
+  } catch (error) {
+    console.error("Error saving project:", error);
+    savedStatus.value = {
+      type: "error",
+      message: `Failed to save project: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`,
+    };
+  } finally {
+    isSaving.value = false;
   }
 };
 </script>

@@ -67,3 +67,72 @@ export const deleteProjectFromLocalStorage = (projectNumber: string) => {
     console.error("Error deleting project:", error);
   }
 };
+
+export function saveDetailedProjectToLocalStorage(
+  project: any,
+  designOptions: any,
+  selectedOption: string,
+  backgroundColor: string
+) {
+  // Validate project data
+  if (!project || !project.id || typeof project.id !== "string") {
+    console.error("Invalid project data:", project);
+    throw new Error("Invalid project data or project number.");
+  }
+
+  try {
+    // Create a simplified project object to store
+    const projectToSave = {
+      id: project.id,
+      name: project.name || "Unnamed Project",
+      designOptions: {
+        Option1: (designOptions?.Option1 || []).map((opt: any) => ({
+          id: opt.id,
+          name: opt.name,
+        })),
+        Option2: (designOptions?.Option2 || []).map((opt: any) => ({
+          id: opt.id,
+          name: opt.name,
+        })),
+      },
+      selectedOption: selectedOption || "Option1",
+      backgroundColor: backgroundColor || "#ffffff",
+      savedAt: new Date().toISOString(),
+    };
+
+    // Use project ID as key for storage
+    const storageKey = `immersion-lab-project-${project.id}`;
+    localStorage.setItem(storageKey, JSON.stringify(projectToSave));
+    console.log(`Project saved to local storage with key: ${storageKey}`);
+    return storageKey;
+  } catch (error) {
+    console.error("Error saving project to local storage:", error);
+    throw new Error(
+      `Failed to save project: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`
+    );
+  }
+}
+
+export function getProjectFromLocalStorage(projectId: string) {
+  if (!projectId) {
+    console.error("Invalid project ID provided");
+    return null;
+  }
+
+  try {
+    const storageKey = `immersion-lab-project-${projectId}`;
+    const projectData = localStorage.getItem(storageKey);
+
+    if (!projectData) {
+      console.log(`No saved data found for project ID: ${projectId}`);
+      return null;
+    }
+
+    return JSON.parse(projectData);
+  } catch (error) {
+    console.error("Error retrieving project from local storage:", error);
+    return null;
+  }
+}

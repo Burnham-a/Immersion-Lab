@@ -6,8 +6,9 @@
     <br />
     <div class="mt-4">
       <button
-        @click="redirectToSpeckleAuthPage"
-        class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+        v-if="!isAuthenticated"
+        @click="handleAuthClick"
+        class="bg-blue-600 hover:bg-blue-800 text-white font-semibold py-3 px-6 rounded-lg shadow-md transition duration-300"
       >
         Authenticate with Speckle
       </button>
@@ -15,6 +16,38 @@
     <br />
 
     <div v-if="isAuthenticated" class="mt-8 space-y-6">
+      <!-- User information display with avatar -->
+      <div
+        class="flex items-center justify-center space-x-4 p-4 bg-gray-50 rounded-lg shadow-sm"
+      >
+        <div class="h-12 w-12 rounded-full overflow-hidden bg-gray-200">
+          <img
+            v-if="store.user?.avatarUrl"
+            :src="store.user.avatarUrl"
+            :alt="store.user?.name"
+            class="h-full w-full object-cover"
+          />
+          <span
+            v-else
+            class="h-full w-full flex items-center justify-center text-2xl font-bold text-gray-400"
+          >
+            {{ store.user?.name?.charAt(0).toUpperCase() || "U" }}
+          </span>
+        </div>
+        <div class="text-left">
+          <p class="font-medium text-gray-900">
+            Welcome, {{ store.user?.name || "User" }}
+          </p>
+          <p class="text-sm text-gray-500">{{ store.user?.email }}</p>
+        </div>
+        <button
+          @click="handleLogout"
+          class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded-md text-sm"
+        >
+          Log out
+        </button>
+      </div>
+
       <StreamSearchBar v-model="searchQuery" class="w-full" />
 
       <div v-if="errorMessage" class="text-red-600">
@@ -123,14 +156,22 @@ const router = useRouter();
 
 onMounted(async () => {
   try {
+    // Reset authentication state when mounting the component to ensure starting logged out
+    store.isAuthenticated = false;
+    store.user = null;
+
+    // Clear any existing token
+    localStorage.removeItem("SpeckleToken");
+
+    // Optional: If you still want to check for an existing valid session,
+    // you can uncomment the following block
+    /*
     const user = await store.speckle.user();
-    if (!user) {
-      console.warn("User not authenticated, redirecting...");
-      await router.push({ name: "Step3", query: { access_code: null } });
-    } else {
+    if (user) {
       store.user = user;
       store.isAuthenticated = true;
     }
+    */
   } catch (error) {
     console.error("Error during authentication check:", error);
   }
@@ -144,7 +185,7 @@ const projects = ref<
       models: {
         items: Array<{
           name: string;
-          id: string; // Ensure 'id' is included
+          id: string;
           option?: string;
           versions?: { totalCount?: number } | undefined;
         }>;
@@ -161,15 +202,29 @@ const speckleViewerUrl = computed(() => {
   return null;
 });
 const errorMessage = ref<string | null>(null);
-const { data, error, fetching } = useQuery({
+
+// Correctly handle token for authentication
+const token = ref(localStorage.getItem("SpeckleToken") || "");
+
+// Create a reactive variable to trigger query re-execution when token changes
+const tokenReady = computed(() => isAuthenticated.value && token.value);
+
+const { data, error, fetching, executeQuery } = useQuery({
   query: projectsQuery,
   requestPolicy: "network-only",
-  context: {
+  context: computed(() => ({
     fetchOptions: {
       headers: { Authorization: `Bearer ${store.speckle.token}` },
     },
-  },
-  pause: !isAuthenticated.value,
+  })),
+  pause: computed(() => !isAuthenticated.value),
+});
+
+// Re-execute the query when user authenticates successfully
+watchEffect(() => {
+  if (isAuthenticated.value && store.speckle.token) {
+    executeQuery();
+  }
 });
 
 watchEffect(() => {
@@ -182,7 +237,6 @@ watchEffect(() => {
     id: project.id,
     name: project.name,
     description: project.description,
-    role: project.role || "", // Provide a default empty string for undefined roles
     models: project.models || { items: [] },
   }));
 });
@@ -209,9 +263,76 @@ const updateViewerUrl = () => {
   console.log("Viewer URL updated for model:", selectedModelId.value);
 };
 
-const redirectToSpeckleAuthPage = () => {
-  const speckleAuthUrl = "https://speckle.systems/auth"; // Replace with actual URL
-  window.location.href = speckleAuthUrl;
+// Correctly implement authentication method based on available Speckle client methods
+const handleAuthClick = async () => {
+  try {
+    console.log("Auth button clicked in Step3");
+    console.log("Using client ID:", import.meta.env.VITE_CLIENT_ID);
+    console.log("Using server URL:", import.meta.env.VITE_SERVER_URL);
+
+    // Use the login method from our store
+    await store.login();
+
+    // Wait a moment for the authentication to complete as it might involve redirects
+    setTimeout(async () => {
+      try {
+        // Check if authentication was successful by getting the user data
+        const userData = await store.speckle.user();
+        if (userData) {
+          console.log("Authentication successful, user data:", userData);
+
+          // Update the authentication state
+          store.user = userData;
+          store.isAuthenticated = true;
+
+          // Store the token if available from the Speckle client
+          if (store.speckle.token) {
+            token.value = store.speckle.token;
+            localStorage.setItem("SpeckleToken", store.speckle.token);
+          }
+
+          // Execute the query to fetch projects
+          executeQuery();
+        } else {
+          console.warn("Login did not return user data");
+          errorMessage.value = "Authentication in progress. Please wait...";
+        }
+      } catch (err) {
+        console.error("Error checking authentication status:", err);
+      }
+    }, 1000);
+  } catch (error) {
+    console.error("Authentication error:", error);
+    errorMessage.value = "Authentication failed. Please try again.";
+  }
+};
+
+// Updated logout handler to match ImmersionLabSetup implementation
+const handleLogout = async () => {
+  console.log("Logout handler triggered in Step3");
+
+  // Reset local component state
+  selectedProject.value = null;
+  projects.value = [];
+
+  // Clear Speckle token and reset store state
+  try {
+    // Remove token from localStorage
+    localStorage.removeItem("SpeckleToken");
+
+    // Reset auth state
+    store.isAuthenticated = false;
+    store.user = null;
+
+    // If there's a logout functionality in speckle client, use it
+    if (typeof store.speckle.dispose === "function") {
+      store.speckle.dispose();
+    }
+
+    console.log("User logged out successfully");
+  } catch (error) {
+    console.error("Error during logout:", error);
+  }
 };
 </script>
 

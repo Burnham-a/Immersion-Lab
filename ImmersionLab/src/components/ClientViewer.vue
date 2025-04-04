@@ -24,7 +24,7 @@
 
 <script setup>
 import { ref, watchEffect, onBeforeUnmount, markRaw, nextTick } from "vue";
-import { useStore } from "@/stores/store-IL";
+import { useImmersionLabStore } from "@/stores/store-IL";
 import {
   Viewer,
   DefaultViewerParams,
@@ -36,7 +36,7 @@ import {
 import * as THREE from "three";
 
 // Store initialization
-const store = useStore();
+const store = useImmersionLabStore();
 
 // Reactive variables
 const viewerContainer = ref(null);
