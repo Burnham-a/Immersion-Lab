@@ -1,4 +1,8 @@
 {
+  
+  "compilerOptions": {
+    "strict": true
+  },
   "files": [],
   "references": [
     {
@@ -8,26 +12,4 @@
       "path": "./tsconfig.app.json"
     }
   ],
-  "compilerOptions": {
-    "composite": true, // Enable composite
-    "noEmit": true, // Ensure emit is not disabled
-    "target": "es2017",
-    "lib": ["es2017", "dom"],
-    "module": "esnext",
-    "strict": true,
-    "esModuleInterop": true,
-    "allowJs": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "node",
-    "types": ["vite/client", "vue"],
-    "baseUrl": "./src",
-    "paths": {
-      "@/*": ["*"] // Define an alias @ that points to src/ folder
-    }
-  },
-  "include": [
-    "src/**/*", // Include all TypeScript files in the src directory
-    "types/**/*" // Include all TypeScript definition files in the types directory
-  ]
 }

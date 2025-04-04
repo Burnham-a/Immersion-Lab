@@ -1,12 +1,10 @@
 import {
   createRouter,
   createWebHistory,
-  type NavigationGuard,
 } from "vue-router";
 import HomeView from "../views/HomeView.vue";
 import { authGuard } from "@/router/authGuards.ts";
 import { authGuardIL } from "@/router/authGuards-IL.ts";
-import LoginPage from "@/views/LoginPage.vue"; // Ensure this path points to your Login page component
 
 // Define the router
 const router = createRouter({
