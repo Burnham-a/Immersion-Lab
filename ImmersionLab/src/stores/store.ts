@@ -13,15 +13,16 @@ export const useAuthStore = defineStore("immersionLab", () => {
   const isAuthenticated = ref(false);
   const user = ref<User | null>(null);
 
-  // Hard-code the client ID and client secret to ensure they're properly set
-  const CLIENT_ID = "81d17fdbee";
-  const CLIENT_SECRET = "30fb836fff";
-  const SERVER_URL = "https://app.speckle.systems";
+  // Use environment variables with fallbacks for client credentials
+  const CLIENT_ID = import.meta.env.VITE_CLIENT_ID || "81d17fdbee";
+  const CLIENT_SECRET = import.meta.env.VITE_CLIENT_SECRET || "30fb836fff";
+  const SERVER_URL =
+    import.meta.env.VITE_SERVER_URL || "https://app.speckle.systems";
   const REDIRECT_URL =
     import.meta.env.VITE_SPECKLE_REDIRECT_URI ||
-    "http://localhost:5173/Step3/auth-callback";
+    "https://immersion-lab.vercel.app/Step3/auth-callback";
 
-  // Define options with hardcoded values to prevent undefined issues
+  // Define options with values from environment variables
   const options: ApplicationOptions = {
     clientId: CLIENT_ID,
     clientSecret: CLIENT_SECRET,
