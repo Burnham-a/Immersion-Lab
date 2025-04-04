@@ -23,14 +23,31 @@ export const useImmersionLabStore = defineStore("immersionLab", () => {
 
   async function authenticate() {
     try {
-      const userData = await speckle.user();
-      if (!userData) {
+      // First check if we have a token
+      if (!speckle.token) {
+        console.log("No token found, initiating login flow");
         await speckle.login();
-        return;
+        return null;
       }
-      user.value = userData;
-      isAuthenticated.value = true;
-      return userData;
+
+      // Try to get user data with the token
+      try {
+        const userData = await speckle.user();
+        if (!userData) {
+          console.log("No user data returned, initiating login flow");
+          await speckle.login();
+          return null;
+        }
+        user.value = userData;
+        isAuthenticated.value = true;
+        return userData;
+      } catch (error) {
+        console.error("Error fetching user data, token may be invalid:", error);
+        // Clear invalid token and restart auth flow
+        await speckle.logout();
+        await speckle.login();
+        return null;
+      }
     } catch (error) {
       console.error("Authentication error:", error);
       isAuthenticated.value = false;
@@ -46,6 +63,9 @@ export const useImmersionLabStore = defineStore("immersionLab", () => {
       user.value = null;
     } catch (error) {
       console.error("Logout error:", error);
+      // Even if there's an error, ensure we clear local state
+      isAuthenticated.value = false;
+      user.value = null;
       throw error;
     }
   }

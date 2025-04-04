@@ -22,8 +22,8 @@
       >
         <div class="h-12 w-12 rounded-full overflow-hidden bg-gray-200">
           <img
-            v-if="store.user?.avatarUrl"
-            :src="store.user.avatarUrl"
+            v-if="store.user?.avatar"
+            :src="store.user.avatar"
             :alt="store.user?.name"
             class="h-full w-full object-cover"
           />
@@ -185,7 +185,7 @@ const projects = ref<
       models: {
         items: Array<{
           name: string;
-          id: string;
+          id: string; // Ensure 'id' property is included
           option?: string;
           versions?: { totalCount?: number } | undefined;
         }>;
@@ -251,7 +251,7 @@ const filteredProjects = computed(() => {
 const handleProjectSelected = (project: StreamGridItemProps) => {
   selectedProject.value = project;
   if (project.models.items.length > 0) {
-    selectedModelId.value = project.models.items[0].id || null;
+    selectedModelId.value = project.models.items[0]?.id || null;
   }
 };
 
@@ -270,8 +270,8 @@ const handleAuthClick = async () => {
     console.log("Using client ID:", import.meta.env.VITE_CLIENT_ID);
     console.log("Using server URL:", import.meta.env.VITE_SERVER_URL);
 
-    // Use the login method from our store
-    await store.login();
+    // Call the authentication method directly from the Speckle client
+    await store.speckle.login();
 
     // Wait a moment for the authentication to complete as it might involve redirects
     setTimeout(async () => {
@@ -324,9 +324,9 @@ const handleLogout = async () => {
     store.isAuthenticated = false;
     store.user = null;
 
-    // If there's a logout functionality in speckle client, use it
-    if (typeof store.speckle.dispose === "function") {
-      store.speckle.dispose();
+    // Use the logout method from the speckle client
+    if (typeof store.speckle.logout === "function") {
+      store.speckle.logout();
     }
 
     console.log("User logged out successfully");

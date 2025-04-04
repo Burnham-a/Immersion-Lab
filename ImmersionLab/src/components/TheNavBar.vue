@@ -6,7 +6,7 @@
         <button
           @click="handleSignOut"
           type="button"
-          class="rounded-md px-2 py-1 text-sm border border-white font-semibold text-white shadow-sm hover:bg-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+          class="rounded-md px-2 py-1 text-sm border border-white font-semibold text-white shadow-sm hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
         >
           Sign out
         </button>

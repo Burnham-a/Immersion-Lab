@@ -27,7 +27,7 @@
 <script setup lang="ts">
 import type { CombinedError } from "@urql/core";
 import StreamGridItem from "./StreamGridItem.vue";
-import { StreamGridItemProps } from "@/types/StreamGridItemProps";
+import type { StreamGridItemProps } from "@/types/StreamGridItemProps";
 
 export interface Project {
   id: string;

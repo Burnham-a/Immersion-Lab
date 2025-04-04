@@ -20,14 +20,14 @@
           <button
             v-if="store.isAuthenticated"
             @click="router.push('/streams')"
-            class="rounded-md bg-blue-600 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+            class="rounded-md bg-blue-600 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 focus-visible:outline focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
           >
             Get started
           </button>
           <button
             v-else
-            @click="store.redirectToSpeckleAuthPage()"
-            class="rounded-md bg-blue-600 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+            @click="login"
+            class="rounded-md bg-blue-600 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 focus-visible:outline focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
           >
             Login with Speckle
           </button>
@@ -38,13 +38,25 @@
 </template>
 
 <script setup lang="ts">
-import { useStore } from "@/stores/store";
+import { useAuthStore } from "@/stores/store";
 import { useRouter } from "vue-router";
 
-const store = useStore();
+const store = useAuthStore();
 const router = useRouter();
 
 const headline = store.isAuthenticated
   ? `Your first Speckle app, ${store.user?.name}`
   : "Your first Speckle app!";
+
+// Add login function if redirectToSpeckleAuthPage doesn't exist in the store
+function login() {
+  // If your store has a different method for authentication, use that instead
+  if (typeof store.login === "function") {
+    store.login();
+  } else {
+    console.error("Login method not found in store");
+    // Fallback - you may need to implement proper authentication here
+    // or check your store implementation
+  }
+}
 </script>

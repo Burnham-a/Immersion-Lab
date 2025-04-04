@@ -9,30 +9,25 @@
     <br />
 
     <!-- Authentication Component -->
-    <AuthenticationComponent @auth-click="handleAuthClick" />
+    <AuthenticationComponent
+      @auth-click="handleAuthClick"
+      :is-authenticating="isAuthenticating"
+      :auth-error="authError"
+    />
 
     <!-- Only show the following section if the user is authenticated -->
     <div v-if="isAuthenticated" class="mt-10 space-y-8">
       <!-- User Profile Component -->
-      <UserProfileComponent :user="user" @logout="handleLogout" />
+      <UserProfileComponent :user="user ?? {}" @logout="handleLogout" />
 
       <!-- Project Search Component -->
-      <div>
-        <ProjectSearchComponent
-          :projects="filteredProjects"
-          :is-loading-projects="isLoadingProjects"
-          :error-message="errorMessage"
-          @search-query-change="updateSearchQuery"
-          @project-selected="handleProjectSelected"
-        />
-        <p class="text-sm text-gray-500 mt-2 text-right">
-          {{
-            searchQuery.length > 0
-              ? `Showing ${filteredProjects.length} of ${projects.length} projects`
-              : `Total projects: ${projects.length}`
-          }}
-        </p>
-      </div>
+      <ProjectSearchComponent
+        :projects="projects"
+        :is-loading-projects="isLoadingProjects"
+        :error-message="errorMessage"
+        @search-query-change="updateSearchQuery"
+        @project-selected="handleProjectSelected"
+      />
       <br />
 
       <!-- Design Options Component -->
@@ -47,7 +42,7 @@
 
       <!-- Project Details Component -->
       <ProjectDetailsComponent
-        :selected-project="selectedProject"
+        :selected-project="selectedProjectForViewer"
         :design-options="designOptions"
         @add-model-to-design-option="addModelToDesignOption"
       />
@@ -56,7 +51,7 @@
       <ViewerComponent
         v-if="selectedProject"
         ref="viewerComponent"
-        :selected-project="selectedProject"
+        :selected-project="selectedProjectForViewer"
         :selected-design-option="selectedDesignOption"
         :design-options="designOptions"
         :viewer-background-color="viewerBackgroundColor"
@@ -64,11 +59,28 @@
 
       <!-- Project Save Component -->
       <ProjectSaveComponent
-        :selected-project="selectedProject"
+        :selected-project="selectedProject || undefined"
         :design-options="designOptions"
-        :viewer-background-color="viewerBackgroundColor"
-        :selected-design-option="selectedDesignOption"
       />
+    </div>
+
+    <!-- Loading indicator -->
+    <div v-if="isAuthenticating" class="mt-6">
+      <p class="text-blue-600">Authenticating, please wait...</p>
+    </div>
+
+    <!-- Authentication error message -->
+    <div
+      v-if="authError && !isAuthenticated"
+      class="mt-6 p-4 bg-red-100 rounded-md"
+    >
+      <p class="text-red-600">{{ authError }}</p>
+      <button
+        @click="clearAuthError"
+        class="mt-2 px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+      >
+        Try Again
+      </button>
     </div>
   </main>
 </template>
@@ -89,9 +101,8 @@ import DesignOptionsComponent from "@/components/DesignOptionsComponent.vue";
 import ViewerComponent from "@/components/ViewerComponent.vue";
 import ProjectSaveComponent from "@/components/ProjectSaveComponent.vue";
 
-// Add error handling utility
 import { useImmersionLabStore } from "@/stores/store-IL";
-import { StreamGridItemProps } from "@/types/StreamGridItemProps";
+import type { StreamGridItemProps } from "@/types/StreamGridItemProps";
 
 // Import GraphQL query
 import { useQuery } from "@urql/vue";
@@ -105,12 +116,18 @@ const router = useRouter();
 const user = computed(() => store.user);
 const isLoadingProjects = ref(false);
 const isAuthenticated = computed(() => store.isAuthenticated);
+const isAuthenticating = ref(false);
+const authError = ref<string | null>(null);
 const selectedProject = ref<{
   name: string;
   id: string;
   models?: { items: any[] };
 } | null>(null);
-const errorMessage = ref<string | null>(null);
+
+const selectedProjectForViewer = computed(() =>
+  selectedProject.value ? { ...selectedProject.value } : undefined
+);
+const errorMessage = ref<string | undefined>(undefined);
 const selectedDesignOption = ref<"Option1" | "Option2" | "Both">("Option1");
 const designOptions = ref<{
   Option1: { name: string; id: string }[];
@@ -125,37 +142,62 @@ const projects = ref<StreamGridItemProps[]>([]);
 const viewerComponent = ref<InstanceType<typeof ViewerComponent> | null>(null);
 const viewerInitialized = ref(false);
 
-// Add filteredProjects computed property to only show projects when there's a search query
-const filteredProjects = computed(() => {
-  if (!searchQuery.value) return []; // Return empty array when no search query
-  return projects.value.filter((project) =>
-    project.name.toLowerCase().includes(searchQuery.value.toLowerCase())
-  );
-});
-
 // GraphQL Query
 const { executeQuery, data, error } = useQuery({
   query: projectsQuery,
   requestPolicy: "network-only",
-  context: {
+  context: computed(() => ({
     fetchOptions: {
-      headers: { Authorization: `Bearer ${store.speckle.token ?? ""}` },
+      headers: {
+        Authorization: store.speckle.token
+          ? `Bearer ${store.speckle.token}`
+          : "",
+      },
     },
-  },
-  pause: true, // Pause query by default
+  })),
+  pause: computed(() => !store.isAuthenticated || !store.speckle.token),
 });
 
 // Authentication handling
 const handleAuthClick = async () => {
   try {
-    await store.authenticate();
-    if (store.isAuthenticated) {
+    isAuthenticating.value = true;
+    authError.value = null;
+
+    // Call the authenticate method with better error handling
+    const authResult = await store.authenticate().catch((error) => {
+      console.error("Auth method exception:", error);
+      // Return null to indicate authentication failure but don't throw
+      // to allow the login flow to continue
+      return null;
+    });
+
+    // Check if authentication was successful
+    if (store.isAuthenticated && store.speckle.token) {
+      console.log("Authentication successful, fetching projects...");
       await fetchProjects();
+    } else {
+      console.log("Authentication in progress or redirected to login page");
+      // Don't show an error since the user might just be going through the auth flow
+      // We'll only show an error if there was an actual exception
+      if (!authResult && !store.speckle.token) {
+        authError.value =
+          "Authentication process started. Please complete the login in the opened window.";
+      }
     }
   } catch (error) {
     console.error("Authentication error:", error);
-    errorMessage.value = "Authentication failed. Please try again.";
+    authError.value =
+      error instanceof Error
+        ? `Authentication failed: ${error.message}`
+        : "Authentication failed. Please try again.";
+  } finally {
+    isAuthenticating.value = false;
   }
+};
+
+const clearAuthError = () => {
+  authError.value = null;
 };
 
 // Fix the logout handler to match the original implementation
@@ -175,6 +217,7 @@ const handleLogout = async () => {
     Option2: [],
   };
   viewerInitialized.value = false;
+  authError.value = null;
 
   // Use the store's logout method
   try {
@@ -187,13 +230,20 @@ const handleLogout = async () => {
 
 // Project handling
 const fetchProjects = async () => {
-  if (!store.isAuthenticated) return;
+  if (!store.isAuthenticated || !store.speckle.token) {
+    console.log("Cannot fetch projects: Not authenticated or missing token");
+    return;
+  }
 
   try {
     isLoadingProjects.value = true;
-    errorMessage.value = null;
+    errorMessage.value = undefined;
 
     await executeQuery();
+
+    if (error.value) {
+      throw new Error(error.value.message);
+    }
   } catch (err) {
     console.error("Error fetching projects:", err);
     errorMessage.value = "Failed to fetch projects.";
@@ -206,27 +256,17 @@ const handleProjectSelected = async (project: StreamGridItemProps) => {
   console.log("Project selected:", project);
 
   try {
-    if (!project || !project.id) {
-      console.error("Invalid project data:", project);
-      errorMessage.value = "Invalid project data";
-      return;
-    }
-
     // First reset the current selection to ensure clean state
     designOptions.value = {
       Option1: [],
       Option2: [],
     };
 
-    // Ensure models property is always correctly formatted
-    const models = project.models?.items?.length
-      ? { items: project.models.items }
-      : { items: [] };
+    const models =
+      project.models && project.models.items ? project.models : { items: [] };
 
     selectedProject.value = {
       ...project,
-      name: project.name || "Unnamed Project",
-      id: project.id,
       models: models,
     };
 
@@ -241,7 +281,6 @@ const handleProjectSelected = async (project: StreamGridItemProps) => {
     }
   } catch (err) {
     console.error("Error handling project selection:", err);
-    errorMessage.value = "Error selecting project";
   }
 };
 
@@ -266,56 +305,34 @@ const viewDesignOption = async (option: string) => {
 const addModelToDesignOption = async (model: any, option: string) => {
   console.log(`Adding model to ${option}:`, model);
 
-  // Validate model input
-  if (!model || !model.id || !model.name) {
-    console.error("Invalid model data:", model);
-    errorMessage.value = "Invalid model data provided";
-    return;
+  // Clone and update the design options
+  const updatedOptions = { ...designOptions.value };
+
+  if (option === "Option1") {
+    updatedOptions.Option1 = [model];
+  } else if (option === "Option2") {
+    updatedOptions.Option2 = [model];
   }
 
-  try {
-    // Clone and update the design options with validated model
-    const updatedOptions = { ...designOptions.value };
-    const validatedModel = {
-      id: model.id,
-      name: model.name,
-      // Add any other required properties for the model
-    };
+  // Update the design options
+  designOptions.value = updatedOptions;
 
-    if (option === "Option1") {
-      updatedOptions.Option1 = [validatedModel];
-    } else if (option === "Option2") {
-      updatedOptions.Option2 = [validatedModel];
+  // Set selected option
+  selectedDesignOption.value = option as "Option1" | "Option2" | "Both";
+
+  // Ensure viewer is initialized
+  if (viewerComponent.value) {
+    if (!viewerInitialized.value) {
+      await viewerComponent.value.initializeViewer();
+      viewerInitialized.value = true;
     }
 
-    // Update the design options
-    designOptions.value = updatedOptions;
-
-    // Set selected option
-    selectedDesignOption.value = option as "Option1" | "Option2" | "Both";
-
-    // Ensure viewer is initialized
-    if (viewerComponent.value) {
-      if (!viewerInitialized.value) {
-        await viewerComponent.value.initializeViewer();
-        viewerInitialized.value = true;
-      }
-
-      // Add a small delay to ensure state is updated
-      setTimeout(async () => {
-        try {
-          if (viewerComponent.value) {
-            await viewerComponent.value.loadModels();
-          }
-        } catch (error) {
-          console.error("Error loading models:", error);
-          errorMessage.value = "Failed to load models. Please try again.";
-        }
-      }, 100);
+    // No need for setTimeout, directly call loadModels with proper error handling
+    try {
+      await viewerComponent.value.loadModels();
+    } catch (error) {
+      console.error("Error loading models:", error);
     }
-  } catch (err) {
-    console.error("Error adding model to design option:", err);
-    errorMessage.value = "Failed to add model to design option";
   }
 };
 
@@ -330,7 +347,7 @@ watchEffect(() => {
         description: project.description || "",
         models: project.models || { items: [] },
       }));
-      console.log(`Projects loaded: ${projects.value.length}`);
+      console.log("Projects updated:", projects.value.length);
     }
   } catch (err) {
     console.error("Error processing projects data:", err);
@@ -341,8 +358,24 @@ watchEffect(() => {
 // Initialize the component
 onMounted(async () => {
   // Check if already authenticated and fetch projects if needed
-  if (store.isAuthenticated) {
-    await fetchProjects();
+  if (store.isAuthenticated && store.speckle.token) {
+    try {
+      console.log("Already authenticated, fetching projects...");
+      await fetchProjects();
+    } catch (err) {
+      console.error("Error fetching projects on mount:", err);
+      // If we get an authentication error during automatic fetch,
+      // we should clear the auth state as the token might be invalid
+      if (
+        err instanceof Error &&
+        (err.message.includes("403") || err.message.includes("authentication"))
+      ) {
+        await store.logout();
+        authError.value = "Your session has expired. Please log in again.";
+      }
+    }
+  } else {
+    console.log("Not authenticated yet, waiting for user login");
   }
 });
 </script>

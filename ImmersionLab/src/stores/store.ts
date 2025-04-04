@@ -14,8 +14,8 @@ export const useAuthStore = defineStore("immersionLab", () => {
   const user = ref<User | null>(null);
 
   // Use environment variables with fallbacks for client credentials
-  const CLIENT_ID = import.meta.env.VITE_CLIENT_ID || "81d17fdbee";
-  const CLIENT_SECRET = import.meta.env.VITE_CLIENT_SECRET || "30fb836fff";
+  const CLIENT_ID = import.meta.env.VITE_CLIENT_ID;
+  const CLIENT_SECRET = import.meta.env.VITE_CLIENT_SECRET;
   const SERVER_URL =
     import.meta.env.VITE_SERVER_URL || "https://app.speckle.systems";
   const REDIRECT_URL =
@@ -27,16 +27,14 @@ export const useAuthStore = defineStore("immersionLab", () => {
     clientId: CLIENT_ID,
     clientSecret: CLIENT_SECRET,
     serverUrl: SERVER_URL,
-    redirectUri: REDIRECT_URL,
   };
 
   // Log the options being used to help with debugging
   console.log("Initializing Speckle client with options:", {
     clientId: options.clientId,
     serverUrl: options.serverUrl,
-    redirectUri: options.redirectUri,
-    // Don't log client secret for security reasons
   });
+  // Don't log client secret for security reasons
 
   // Initialize the Speckle client with our options
   const speckle = new SpeckleAuthClient(options);
@@ -46,13 +44,7 @@ export const useAuthStore = defineStore("immersionLab", () => {
       console.log("Starting login with client ID:", CLIENT_ID);
 
       // Manually specify the redirectUrl again during login to ensure it's used
-      await speckle.login({
-        redirectUri: options.redirectUri,
-        // Additional optional parameters if helpful:
-        // appId: CLIENT_ID,
-        // Challenge for PKCE flow (if needed)
-        // challenge: "randomGeneratedChallenge"
-      });
+      await speckle.login();
     } catch (error) {
       console.error("Error during login:", error);
       throw error; // Rethrow to allow caller to handle

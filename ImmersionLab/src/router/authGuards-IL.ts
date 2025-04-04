@@ -1,22 +1,33 @@
-// authGuards-IL.ts (ImmersionLab Authentication Guard)
+import type { NavigationGuardNext, RouteLocationNormalized } from "vue-router";
 import { useImmersionLabStore } from "@/stores/store-IL";
-import type { NavigationGuard } from "vue-router";
 
-export const authGuardIL: NavigationGuard = async (to, from, next) => {
-  const store = useImmersionLabStore();
+export const authGuardIL = async (
+  to: RouteLocationNormalized,
+  from: RouteLocationNormalized,
+  next: NavigationGuardNext
+) => {
   try {
-    const user = await store.speckle.user();
-    if (user) {
-      store.user = user;
-      store.isAuthenticated = true;
-      next();
-    } else {
-      console.warn("User not authenticated. Redirecting to ImmersionLab...");
-      await store.speckle.login();
-      next();
+    const store = useImmersionLabStore();
+
+    // Check if we have a token but not authenticated yet
+    if (store.speckle.token && !store.isAuthenticated) {
+      try {
+        // Try to silently authenticate with the token
+        await store.authenticate();
+      } catch (e) {
+        console.warn(
+          "Token exists but authentication failed, will proceed anyway",
+          e
+        );
+        // Continue even if this fails - the component will handle authentication
+      }
     }
+
+    console.log("Proceeding to Immersion Lab");
+    return next();
   } catch (error) {
-    console.error("Error during authentication:", error);
-    next(false); // Abort navigation on error
+    console.error("Error during navigation:", error);
+    // Still proceed even if there's an error
+    return next();
   }
 };

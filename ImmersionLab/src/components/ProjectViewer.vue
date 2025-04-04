@@ -11,18 +11,18 @@ import { onMounted, ref } from "vue";
 import type { StreamGridItemProps } from "@/types/StreamGridItemProps";
 import { Viewer, CameraController, SpeckleLoader } from "@speckle/viewer";
 import * as THREE from "three"; // Import Three.js for handling 3D objects
-import { useStore } from "@/stores/store"; // Ensure correct import path
+import { useAuthStore } from "@/stores/store"; // Ensure correct import path
 
 const props = defineProps<{ project: StreamGridItemProps }>();
 
 const container = ref<HTMLElement | null>(null);
-const store = useStore();
+const store = useAuthStore();
 
 onMounted(async () => {
   if (!container.value) return;
 
   // Retrieve the authToken from the store
-  const authToken = store.authToken;
+  const authToken = store.speckle.token; // Retrieve the token directly from the speckle object
 
   if (!authToken) {
     console.error("Authentication token is missing.");

@@ -78,6 +78,7 @@ import {
   CameraController,
   SelectionExtension,
   UrlHelper,
+  ViewerEvent,
 } from "@speckle/viewer";
 import * as THREE from "three";
 
@@ -210,8 +211,8 @@ const disposeViewer = async () => {
       console.log("Disposing viewer instance...");
 
       // Clean up resize observer if it exists
-      if (viewer.value.userData?.resizeObserver) {
-        viewer.value.userData.resizeObserver.disconnect();
+      if ((viewer.value as any).userData?.resizeObserver) {
+        (viewer.value as any).userData.resizeObserver.disconnect();
       }
 
       await viewer.value.dispose();
@@ -229,7 +230,8 @@ watch(
   (newColor) => {
     if (viewerInitialized.value && viewer.value) {
       try {
-        viewer.value.setBackgroundColor(new THREE.Color(newColor));
+        // Use type assertion to access setBackgroundColor method
+        (viewer.value as any).setBackgroundColor(new THREE.Color(newColor));
         console.log("Background color updated to:", newColor);
       } catch (error) {
         console.warn("Could not update background color:", error);
@@ -337,20 +339,17 @@ const initializeViewer = async () => {
       if (viewer.value && viewerContainer.value) {
         try {
           console.log("Container resized, updating viewer");
-          viewer.value.resize(
-            viewerContainer.value.clientWidth,
-            viewerContainer.value.clientHeight
-          );
+          viewer.value.resize();
 
           // Force render to update after resize
           if (
-            viewer.value.renderer &&
-            viewer.value.scene &&
-            viewer.value.camera
+            (viewer.value as any).renderHandler?.renderer &&
+            (viewer.value as any).scene &&
+            (viewer.value as any).cameraHandler?.activeCam
           ) {
-            viewer.value.renderer.render(
-              viewer.value.scene,
-              viewer.value.camera
+            (viewer.value as any).renderHandler.renderer.render(
+              (viewer.value as any).scene,
+              (viewer.value as any).cameraHandler.activeCam
             );
           }
         } catch (e) {
@@ -362,8 +361,8 @@ const initializeViewer = async () => {
     resizeObserver.observe(viewerContainer.value);
 
     // Store the observer reference to disconnect it later
-    viewer.value.userData = {
-      ...viewer.value.userData,
+    (viewer.value as any).userData = {
+      ...(viewer.value as any).userData,
       resizeObserver,
     };
 
@@ -373,14 +372,18 @@ const initializeViewer = async () => {
 
     // Force initial resize
     if (viewerContainer.value) {
-      viewer.value.resize(
-        viewerContainer.value.clientWidth,
-        viewerContainer.value.clientHeight
-      );
+      viewer.value.resize();
 
       // Trigger a render to make sure canvas is updated
-      if (viewer.value.renderer && viewer.value.scene && viewer.value.camera) {
-        viewer.value.renderer.render(viewer.value.scene, viewer.value.camera);
+      if (
+        (viewer.value as any).renderHandler?.renderer &&
+        (viewer.value as any).scene &&
+        (viewer.value as any).cameraHandler?.activeCam
+      ) {
+        (viewer.value as any).renderHandler.renderer.render(
+          (viewer.value as any).scene,
+          (viewer.value as any).cameraHandler.activeCam
+        );
       }
     }
 
@@ -447,7 +450,6 @@ const loadModels = async () => {
       console.log("No models to load");
       errorMessage.value =
         "No models selected. Please select a model from the project details.";
-      createPlaceholderModel(viewer.value);
       return;
     }
 
@@ -500,8 +502,8 @@ const loadModels = async () => {
               );
 
               try {
-                if (loader && typeof loader.removeAllListeners === "function") {
-                  loader.removeAllListeners("load-progress");
+                if (loader && typeof loader.removeListener === "function") {
+                  loader.removeListener("load-progress", () => {});
                 }
               } catch (listenerErr) {
                 console.warn(
@@ -553,8 +555,8 @@ const loadModels = async () => {
             }
 
             try {
-              if (loader && typeof loader.removeAllListeners === "function") {
-                loader.removeAllListeners("load-progress");
+              if (loader && typeof loader.removeListener === "function") {
+                loader.removeListener("load-progress", () => {});
               }
             } catch (listenerErr) {
               console.warn(
@@ -613,10 +615,9 @@ const loadModels = async () => {
     }
 
     if (successfulLoads.size === 0) {
-      console.warn("No objects were loaded successfully, creating placeholder");
+      console.warn("No objects were loaded successfully");
       errorMessage.value =
         "Failed to load any models. Please check your selection.";
-      createPlaceholderModel(viewer.value);
     } else {
       console.log(
         `Successfully loaded ${successfulLoads.size} unique models (${loadedObjectsCount} total objects)`
@@ -629,10 +630,6 @@ const loadModels = async () => {
   } catch (err) {
     console.error("Error in loadModels:", err);
     errorMessage.value = "Failed to load models. Please try again.";
-
-    if (viewer.value) {
-      createPlaceholderModel(viewer.value);
-    }
   } finally {
     isLoadingModel.value = false;
     loadingModelIds.value.clear();
@@ -640,15 +637,21 @@ const loadModels = async () => {
 };
 
 const fitCameraToScene = async () => {
-  if (!viewer.value || !viewer.value.cameraController) return;
+  if (!viewer.value) return;
 
   console.log("Attempting to fit camera to scene");
 
   await new Promise((resolve) => setTimeout(resolve, 500));
 
   try {
-    viewer.value.cameraController.fitToScene();
-    console.log("Initial camera fit completed");
+    const cameraController = viewer.value.getExtension(CameraController);
+    if (cameraController) {
+      // Use zoomExtents instead of fitToScene for proper camera fitting
+      (cameraController as any).zoomExtents();
+      console.log("Initial camera fit completed");
+    } else {
+      console.warn("CameraController extension not available");
+    }
   } catch (e) {
     console.warn("Initial camera fit failed:", e);
   }
@@ -660,17 +663,25 @@ const fitCameraToScene = async () => {
 
     try {
       console.log(`Retrying camera fit after ${delay}ms`);
-      viewer.value.cameraController.fitToScene();
+      const cameraController = viewer.value.getExtension(CameraController);
+      if (cameraController) {
+        (cameraController as any).zoomExtents();
 
-      if (delay > 500) {
-        const camera = viewer.value.cameraController.camera;
-        if (camera && camera.position) {
-          console.log("Adjusting camera position for better visibility");
-          camera.position.multiplyScalar(1.2);
-          camera.updateProjectionMatrix();
+        if (delay > 500) {
+          // Access the camera through the proper API
+          const camera = (viewer.value as any).cameraHandler?.activeCam;
+          if (camera && camera.position) {
+            console.log("Adjusting camera position for better visibility");
+            camera.position.multiplyScalar(1.2);
+            camera.updateProjectionMatrix();
 
-          if (viewer.value.renderer) {
-            viewer.value.renderer.render(viewer.value.scene, camera);
+            if ((viewer.value as any).renderHandler?.renderer) {
+              // Use the proper renderer access pattern
+              (viewer.value as any).renderHandler.renderer.render(
+                (viewer.value as any).scene,
+                camera
+              );
+            }
           }
         }
       }
@@ -681,71 +692,31 @@ const fitCameraToScene = async () => {
 };
 
 const addGridHelper = () => {
-  if (!viewer.value || !viewer.value.scene) return;
+  if (!viewer.value) return;
 
   try {
-    const existingGrid = viewer.value.scene.children.find(
-      (child) => child.name === "gridHelper"
+    // Get the scene from the viewer using type assertion
+    const scene = (viewer.value as any).scene;
+    if (!scene) {
+      console.warn("Scene not available in viewer");
+      return;
+    }
+
+    const existingGrid = scene.children.find(
+      (child: THREE.Object3D) => child.name === "gridHelper"
     );
     if (existingGrid) {
-      viewer.value.scene.remove(existingGrid);
+      scene.remove(existingGrid);
     }
 
     const gridHelper = new THREE.GridHelper(100, 100, 0x888888, 0xcccccc);
     gridHelper.name = "gridHelper";
     gridHelper.position.y = -0.01;
-    viewer.value.scene.add(gridHelper);
+    scene.add(gridHelper);
 
     console.log("Added grid helper for orientation");
   } catch (e) {
     console.warn("Failed to add grid helper:", e);
-  }
-};
-
-const createPlaceholderModel = (viewerInstance: Viewer) => {
-  try {
-    if (viewerInstance && viewerInstance.scene) {
-      const geometry = new THREE.BoxGeometry(10, 10, 10);
-      const material = new THREE.MeshBasicMaterial({
-        color: 0xff6600,
-        wireframe: true,
-        opacity: 0.8,
-        transparent: true,
-      });
-      const cube = new THREE.Mesh(geometry, material);
-
-      cube.position.set(0, 5, 0);
-      viewerInstance.scene.add(cube);
-      console.log("Added placeholder model");
-
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
-      viewerInstance.scene.add(ambientLight);
-
-      const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
-      dirLight.position.set(10, 20, 10);
-      viewerInstance.scene.add(dirLight);
-
-      if (viewerInstance.cameraController) {
-        viewerInstance.cameraController.fitToScene();
-
-        setTimeout(() => {
-          if (viewerInstance.cameraController) {
-            try {
-              const camera = viewerInstance.cameraController.camera;
-              if (camera && camera.position) {
-                camera.position.multiplyScalar(1.5);
-                camera.updateProjectionMatrix();
-              }
-              viewerInstance.cameraController.fitToScene();
-            } catch (e) {
-              console.warn("Error adjusting placeholder camera:", e);
-            }
-          }
-        }, 100);
-      }
-    }
-  } catch (error) {
-    console.error("Error creating placeholder model:", error);
   }
 };
 

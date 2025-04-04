@@ -35,7 +35,7 @@
 import { ref, computed, watchEffect } from "vue";
 import StreamSearchBar from "@/components/StreamSearchBar.vue";
 import StreamGrid from "@/components/StreamGrid.vue";
-import { StreamGridItemProps } from "@/types/StreamGridItemProps";
+import type { StreamGridItemProps } from "@/types/StreamGridItemProps";
 
 // Define props
 const props = defineProps({
@@ -91,7 +91,7 @@ const filteredProjects = computed(() => {
   });
 });
 
-const handleProjectSelected = (project) => {
+const handleProjectSelected = (project: StreamGridItemProps) => {
   emit("project-selected", project);
 };
 </script>

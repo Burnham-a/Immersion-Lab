@@ -30,12 +30,32 @@ import { useImmersionLabStore } from "@/stores/store-IL";
 const router = useRouter();
 const store = useImmersionLabStore();
 
-const goToStaffHome = () => {
-  router.push({ name: "ImmersionLab" }); // Updated to match the correct route name
+const goToStaffHome = async () => {
+  try {
+    // Reset any authentication state if needed
+    if (store.isAuthenticated) {
+      await store.logout();
+    }
+
+    await router.push({ name: "ImmersionLab" });
+  } catch (error) {
+    console.error("Navigation error:", error);
+    // Handle the error appropriately
+  }
 };
 
-const goToClientApp = () => {
-  router.push({ name: "ClientApp" });
+const goToClientApp = async () => {
+  try {
+    // Reset any authentication state if needed
+    if (store.isAuthenticated) {
+      await store.logout();
+    }
+
+    await router.push({ name: "ClientApp" });
+  } catch (error) {
+    console.error("Navigation error:", error);
+    // Handle the error appropriately
+  }
 };
 </script>
 
