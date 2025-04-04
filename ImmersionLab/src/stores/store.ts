@@ -18,9 +18,6 @@ export const useAuthStore = defineStore("immersionLab", () => {
   const CLIENT_SECRET = import.meta.env.VITE_CLIENT_SECRET;
   const SERVER_URL =
     import.meta.env.VITE_SERVER_URL || "https://app.speckle.systems";
-  const REDIRECT_URL =
-    import.meta.env.VITE_SPECKLE_REDIRECT_URI ||
-    "https://immersion-lab.vercel.app/Step3/auth-callback";
 
   // Define options with values from environment variables
   const options: ApplicationOptions = {
