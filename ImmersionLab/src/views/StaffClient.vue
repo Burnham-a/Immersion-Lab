@@ -1,6 +1,6 @@
 <template>
   <div class="home-container">
-    <h1 class="text-4xl font-extrabold text-gray-900 mb-6">
+    <h1 class="text-4xl font-extrabold text-white mb-6 text-shadow">
       Welcome to the Immersion Lab
     </h1>
     <div class="button-container">
@@ -72,5 +72,9 @@ const goToClientApp = async () => {
   display: flex;
   gap: 20px;
   margin-top: 30px;
+}
+
+.text-shadow {
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
 }
 </style>

@@ -1,9 +1,33 @@
 <script setup lang="ts">
-import { RouterLink, RouterView, useRoute } from "vue-router";
+import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import HelloWorld from "./components/HelloWorld.vue";
-import { onMounted, ref } from "vue";
+import { onMounted, provide, ref } from "vue";
 
 const route = useRoute();
+const router = useRouter();
+
+// Create a reactive reference to track when components should reset their state
+const resetTrigger = ref(0);
+
+// Function to reset component states without page refresh
+const resetComponentStates = () => {
+  // Increment to trigger watchers in components
+  resetTrigger.value++;
+};
+
+// Provide the reset trigger to child components
+provide("resetTrigger", resetTrigger);
+
+// Provide the reset function to child components
+provide("resetComponentStates", resetComponentStates);
+
+// Listen for navigation and reset states when route changes
+router.beforeEach((to, from, next) => {
+  if (from.path !== to.path) {
+    resetComponentStates();
+  }
+  next();
+});
 </script>
 
 <template>
@@ -37,7 +61,8 @@ const route = useRoute();
     </div>
   </header>
 
-  <RouterView />
+  <!-- Using :key ensures the component is recreated when the path changes -->
+  <RouterView :key="route.path" />
 </template>
 
 <style scoped>
