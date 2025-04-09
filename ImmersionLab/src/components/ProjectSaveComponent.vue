@@ -1,6 +1,8 @@
 <template>
   <div class="project-save-component">
-    <h2 class="text-2xl font-bold mb-4">Save Project Configuration</h2>
+    <h2 class="text-2xl font-bold mb-4 title-text">
+      Save Project Configuration
+    </h2>
 
     <div class="flex flex-col gap-4">
       <div
@@ -178,3 +180,9 @@ const saveProject = async () => {
   }
 };
 </script>
+
+<style scoped>
+.title-text {
+  color: var(--title-color);
+}
+</style>

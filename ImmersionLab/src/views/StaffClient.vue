@@ -1,6 +1,6 @@
 <template>
   <div class="home-container">
-    <h1 class="text-4xl font-extrabold text-white mb-6 text-shadow">
+    <h1 class="text-4xl font-extrabold title-text mb-6 text-shadow">
       Welcome to the Immersion Lab
     </h1>
     <div class="button-container">
@@ -76,5 +76,21 @@ const goToClientApp = async () => {
 
 .text-shadow {
   text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.adaptive-heading {
+  color: var(--inverse-color);
+}
+
+@media (prefers-color-scheme: light) {
+  .adaptive-heading {
+    color: var(--vt-c-black);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .adaptive-heading {
+    color: var(--vt-c-white);
+  }
 }
 </style>

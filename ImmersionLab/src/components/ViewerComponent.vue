@@ -228,16 +228,17 @@ const disposeViewer = async () => {
 watch(
   () => props.viewerBackgroundColor,
   (newColor) => {
-    if (viewerInitialized.value && viewer.value) {
-      try {
-        // Use type assertion to access setBackgroundColor method
-        (viewer.value as any).setBackgroundColor(new THREE.Color(newColor));
-        console.log("Background color updated to:", newColor);
-      } catch (error) {
-        console.warn("Could not update background color:", error);
-      }
+    console.log("viewerBackgroundColor prop changed to:", newColor);
+
+    if (!viewerInitialized.value || !viewer.value) {
+      console.log("Viewer not initialized yet, will apply color when ready");
+      return;
     }
-  }
+
+    // Call our updated function
+    updateViewerBackgroundColor(newColor);
+  },
+  { immediate: true } // This will run once on component creation
 );
 
 // Watch for changes in the container background color
@@ -271,132 +272,141 @@ watch(
   { deep: true }
 );
 
-const initializeViewer = async () => {
-  if (!viewerContainer.value) {
-    console.log("Viewer container not available");
-    return null;
-  }
-
-  if (viewerInitialized.value && viewer.value) {
-    console.log("Viewer already initialized, returning existing instance");
-    return viewer.value;
-  }
-
-  console.log("Initializing viewer...");
-  errorMessage.value = null;
-
+// Add a safe color validator function
+const isValidColor = (color: string): boolean => {
   try {
-    await disposeViewer();
-    await nextTick();
-
-    // Clear container of any leftover elements
-    while (viewerContainer.value.firstChild) {
-      viewerContainer.value.removeChild(viewerContainer.value.firstChild);
-    }
-
-    // Configure viewer parameters
-    const viewerParams = {
-      ...DefaultViewerParams,
-      backgroundColor: new THREE.Color(props.viewerBackgroundColor),
-      verbose: true,
-      showStats: true,
-      renderer: {
-        antialias: true,
-        alpha: true,
-      },
-    };
-
-    // Create and initialize viewer
-    console.log("Creating new viewer instance...");
-    const viewerInstance = new Viewer(viewerContainer.value, viewerParams);
-    await viewerInstance.init();
-    viewer.value = markRaw(viewerInstance);
-
-    // Check if canvas was created
-    const canvas = viewerContainer.value.querySelector("canvas");
-    if (!canvas) {
-      console.error("Canvas was not created during initialization");
-      throw new Error("Canvas element not found after viewer init");
-    }
-
-    // Ensure canvas has correct style and z-index
-    canvas.style.position = "absolute";
-    canvas.style.top = "0";
-    canvas.style.left = "0";
-    canvas.style.width = "100%";
-    canvas.style.height = "100%";
-    canvas.style.zIndex = "2";
-    canvas.style.display = "block";
-
-    debugInfo.value = `Created: ${canvas.width}x${canvas.height}`;
-
-    // Add essential extensions
-    viewer.value.createExtension(CameraController);
-    viewer.value.createExtension(SelectionExtension);
-
-    // Add a resize handler to ensure viewer stays properly sized
-    const resizeObserver = new ResizeObserver(() => {
-      if (viewer.value && viewerContainer.value) {
-        try {
-          console.log("Container resized, updating viewer");
-          viewer.value.resize();
-
-          // Force render to update after resize
-          if (
-            (viewer.value as any).renderHandler?.renderer &&
-            (viewer.value as any).scene &&
-            (viewer.value as any).cameraHandler?.activeCam
-          ) {
-            (viewer.value as any).renderHandler.renderer.render(
-              (viewer.value as any).scene,
-              (viewer.value as any).cameraHandler.activeCam
-            );
-          }
-        } catch (e) {
-          console.warn("Error during resize:", e);
-        }
-      }
-    });
-
-    resizeObserver.observe(viewerContainer.value);
-
-    // Store the observer reference to disconnect it later
-    (viewer.value as any).userData = {
-      ...(viewer.value as any).userData,
-      resizeObserver,
-    };
-
-    viewerInitialized.value = true;
-    forceResetNeeded.value = false;
-    console.log("Viewer initialized successfully");
-
-    // Force initial resize
-    if (viewerContainer.value) {
-      viewer.value.resize();
-
-      // Trigger a render to make sure canvas is updated
-      if (
-        (viewer.value as any).renderHandler?.renderer &&
-        (viewer.value as any).scene &&
-        (viewer.value as any).cameraHandler?.activeCam
-      ) {
-        (viewer.value as any).renderHandler.renderer.render(
-          (viewer.value as any).scene,
-          (viewer.value as any).cameraHandler.activeCam
-        );
-      }
-    }
-
-    return viewer.value;
-  } catch (error) {
-    console.error("Error initializing Speckle Viewer:", error);
-    errorMessage.value =
-      "Failed to initialize 3D viewer. Please try refreshing the page.";
-    viewerInitialized.value = false;
-    return null;
+    // Check if the color can be parsed by THREE.js
+    new THREE.Color(color);
+    return true;
+  } catch (e) {
+    console.warn(`Invalid color value: ${color}`, e);
+    return false;
   }
 };
 
+// Modify the updateViewerBackgroundColor function to use the direct container style approach
+const updateViewerBackgroundColor = async (color: string) => {
+  // Add this DEBUG section at the beginning of the function
+  console.log("DEBUG: Viewer structure:", {
+    hasScene: !!(viewer.value && (viewer.value as any).scene),
+    hasRenderer: !!(
+      viewer.value && (viewer.value as any).renderHandler?.renderer
+    ),
+    viewerKeys: viewer.value ? Object.keys(viewer.value) : [],
+    sceneType:
+      viewer.value && (viewer.value as any).scene
+        ? (viewer.value as any).scene.constructor.name
+        : "none",
+  });
+
+  console.log(`Applying background color: ${color}`);
+
+  // 1. Try applying color to the container directly (from example)
+  if (viewerContainer.value) {
+    viewerContainer.value.style.backgroundColor = color;
+    console.log("Applied background color to container:", color);
+  }
+
+  // 2. If viewer exists, also try to apply color to the scene (when available)
+  if (viewer.value) {
+    try {
+      // Validate color before attempting to use it
+      if (!isValidColor(color)) {
+        console.warn(`Skipping invalid background color: ${color}`);
+        return;
+      }
+
+      // Get container using the viewer's method (from example)
+      try {
+        if (typeof viewer.value.getContainer === "function") {
+          const container = viewer.value.getContainer();
+          if (container) {
+            container.style.backgroundColor = color;
+            console.log(
+              "Applied background color via viewer's container:",
+              color
+            );
+          }
+        }
+      } catch (err) {
+        console.warn("Error setting container via viewer:", err);
+      }
+
+      // Still try the traditional THREE.js way when scene and renderer are available
+      const renderHandler = (viewer.value as any).renderHandler;
+      const scene = (viewer.value as any).scene;
+
+      if (renderHandler?.renderer && scene) {
+        // Create a THREE.js color
+        const threeColor = new THREE.Color(color);
+        renderHandler.renderer.setClearColor(threeColor, 1.0);
+        console.log("Set renderer clear color to:", color);
+
+        scene.background = threeColor.clone();
+        console.log("Set scene background to:", color);
+
+        // Force render if we have all required components
+        if (await isViewerReady()) {
+          setTimeout(() => forceRender(), 10);
+          console.log("Forced render after background color update");
+        }
+      } else {
+        console.log(
+          "Using container background only, scene/renderer not available"
+        );
+      }
+    } catch (err) {
+      console.error("Error in scene/renderer color update:", err);
+      // Container style should still be applied
+    }
+  }
+};
+
+// Add helper functions for background color updates and rendering
+const isViewerReady = async () => {
+  if (!viewer.value) return false;
+
+  // Wait for any pending initialization to complete
+  if (!viewerInitialized.value) {
+    // If viewer exists but not marked as initialized, wait a bit
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (!viewerInitialized.value) return false;
+  }
+
+  // Check if all necessary components are available
+  const hasScene = !!(viewer.value && (viewer.value as any).scene);
+  const hasRenderer = !!(
+    viewer.value && (viewer.value as any).renderHandler?.renderer
+  );
+  const hasCamera = !!(
+    viewer.value && (viewer.value as any).cameraHandler?.activeCam
+  );
+
+  return hasScene && hasRenderer && hasCamera;
+};
+
+// Make the forceRender function more defensive
+const forceRender = () => {
+  if (!viewer.value) return;
+
+  // Check if viewer is ready before attempting to render
+  if (!isViewerReady()) {
+    console.warn("Missing renderer, scene or camera. Cannot force render.");
+    return;
+  }
+
+  try {
+    const renderHandler = (viewer.value as any).renderHandler;
+    const scene = (viewer.value as any).scene;
+    const camera = (viewer.value as any).cameraHandler?.activeCam;
+
+    renderHandler.renderer.render(scene, camera);
+  } catch (err) {
+    console.error("Error during force render:", err);
+  }
+};
+
+// Modify the loadModels function to ensure color is applied right after loading
 const loadModels = async () => {
   console.log("loadModels called");
 
@@ -429,6 +439,16 @@ const loadModels = async () => {
       try {
         await viewer.value.unloadAll();
         console.log("Scene cleared successfully");
+
+        // Apply container background color immediately
+        if (viewerContainer.value) {
+          viewerContainer.value.style.backgroundColor =
+            props.viewerBackgroundColor;
+          console.log(
+            "Applied container background during model load:",
+            props.viewerBackgroundColor
+          );
+        }
       } catch (resetError) {
         console.error("Error clearing scene:", resetError);
       }
@@ -626,6 +646,14 @@ const loadModels = async () => {
 
       await fitCameraToScene();
       addGridHelper();
+
+      // Re-apply background color after loading models - both container and scene
+      updateViewerBackgroundColor(props.viewerBackgroundColor);
+
+      // Also add a delayed attempt to ensure it takes effect
+      setTimeout(() => {
+        updateViewerBackgroundColor(props.viewerBackgroundColor);
+      }, 1000);
     }
   } catch (err) {
     console.error("Error in loadModels:", err);
@@ -633,6 +661,137 @@ const loadModels = async () => {
   } finally {
     isLoadingModel.value = false;
     loadingModelIds.value.clear();
+  }
+};
+
+// Modify the initializeViewer function to set container background immediately
+const initializeViewer = async () => {
+  if (!viewerContainer.value) {
+    console.log("Viewer container not available");
+    return null;
+  }
+
+  if (viewerInitialized.value && viewer.value) {
+    console.log("Viewer already initialized, returning existing instance");
+    return viewer.value;
+  }
+
+  console.log("Initializing viewer...");
+  errorMessage.value = null;
+
+  try {
+    await disposeViewer();
+    await nextTick();
+
+    // Clear container of any leftover elements
+    while (viewerContainer.value.firstChild) {
+      viewerContainer.value.removeChild(viewerContainer.value.firstChild);
+    }
+
+    // Configure viewer parameters with explicit background color
+    const viewerParams = {
+      ...DefaultViewerParams,
+      verbose: true,
+      showStats: true,
+      renderer: {
+        antialias: true,
+        alpha: false, // Set to false for solid background
+      },
+    };
+
+    // Set container background color immediately
+    if (viewerContainer.value) {
+      viewerContainer.value.style.backgroundColor = props.viewerBackgroundColor;
+      console.log(
+        "Set initial container background:",
+        props.viewerBackgroundColor
+      );
+    }
+
+    // Create and initialize viewer
+    console.log(
+      "Creating new viewer instance with background color:",
+      props.viewerBackgroundColor
+    );
+    const viewerInstance = new Viewer(viewerContainer.value, viewerParams);
+    await viewerInstance.init();
+    viewer.value = markRaw(viewerInstance);
+
+    // Set initial background color using our custom function right after init
+    console.log("Setting initial background color");
+    updateViewerBackgroundColor(props.viewerBackgroundColor);
+
+    // Check if canvas was created
+    const canvas = viewerContainer.value.querySelector("canvas");
+    if (!canvas) {
+      console.error("Canvas was not created during initialization");
+      throw new Error("Canvas element not found after viewer init");
+    }
+
+    // Ensure canvas has correct style and z-index
+    canvas.style.position = "absolute";
+    canvas.style.top = "0";
+    canvas.style.left = "0";
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
+    canvas.style.zIndex = "2";
+    canvas.style.display = "block";
+
+    debugInfo.value = `Created: ${canvas.width}x${canvas.height}`;
+
+    // Add essential extensions
+    viewer.value.createExtension(CameraController);
+    viewer.value.createExtension(SelectionExtension);
+
+    // Add a resize handler to ensure viewer stays properly sized
+    const resizeObserver = new ResizeObserver(() => {
+      if (viewer.value && viewerContainer.value) {
+        try {
+          console.log("Container resized, updating viewer");
+          viewer.value.resize();
+
+          // Force render to update after resize
+          if (
+            (viewer.value as any).renderHandler?.renderer &&
+            (viewer.value as any).scene &&
+            (viewer.value as any).cameraHandler?.activeCam
+          ) {
+            (viewer.value as any).renderHandler.renderer.render(
+              (viewer.value as any).scene,
+              (viewer.value as any).cameraHandler.activeCam
+            );
+          }
+        } catch (e) {
+          console.warn("Error during resize:", e);
+        }
+      }
+    });
+
+    resizeObserver.observe(viewerContainer.value);
+
+    // Store the observer reference to disconnect it later
+    (viewer.value as any).userData = {
+      ...(viewer.value as any).userData,
+      resizeObserver,
+    };
+
+    viewerInitialized.value = true;
+    forceResetNeeded.value = false;
+    console.log("Viewer initialized successfully");
+
+    // Force initial resize and render
+    if (viewerContainer.value) {
+      viewer.value.resize();
+      forceRender();
+    }
+
+    return viewer.value;
+  } catch (error) {
+    console.error("Error initializing Speckle Viewer:", error);
+    errorMessage.value =
+      "Failed to initialize 3D viewer. Please try refreshing the page.";
+    viewerInitialized.value = false;
+    return null;
   }
 };
 
@@ -675,13 +834,11 @@ const fitCameraToScene = async () => {
             camera.position.multiplyScalar(1.2);
             camera.updateProjectionMatrix();
 
-            if ((viewer.value as any).renderHandler?.renderer) {
-              // Use the proper renderer access pattern
-              (viewer.value as any).renderHandler.renderer.render(
-                (viewer.value as any).scene,
-                camera
-              );
-            }
+            // Instead of direct renderer access, use our helper function
+            forceRender();
+
+            // Re-apply background color
+            updateViewerBackgroundColor(props.viewerBackgroundColor);
           }
         }
       }
@@ -730,12 +887,49 @@ const setMapPosition = (lat: number, lng: number) => {
   }
 };
 
+// Add this function and expose it
+const debugViewerStructure = () => {
+  if (!viewer.value) {
+    console.log("DEBUG: No viewer instance available");
+    return;
+  }
+
+  console.log("DEBUG: Viewer structure:", {
+    viewerKeys: Object.keys(viewer.value),
+    hasScene: !!(viewer.value && (viewer.value as any).scene),
+    hasRenderer: !!(
+      viewer.value && (viewer.value as any).renderHandler?.renderer
+    ),
+    rendererType:
+      viewer.value && (viewer.value as any).renderHandler?.renderer
+        ? (viewer.value as any).renderHandler.renderer.constructor.name
+        : "none",
+    sceneType:
+      viewer.value && (viewer.value as any).scene
+        ? (viewer.value as any).scene.constructor.name
+        : "none",
+  });
+
+  // Try to print specific properties
+  if ((viewer.value as any).scene) {
+    console.log("Scene background:", (viewer.value as any).scene.background);
+  }
+
+  if ((viewer.value as any).renderHandler?.renderer) {
+    console.log("Renderer:", (viewer.value as any).renderHandler.renderer);
+  }
+};
+
+// Add this to your defineExpose
 defineExpose({
   initializeViewer,
   loadModels,
   setMapPosition,
   disposeViewer,
   reinitializeViewer,
+  updateViewerBackgroundColor,
+  debugViewerStructure,
+  isViewerReady, // Add this new method
 });
 </script>
 

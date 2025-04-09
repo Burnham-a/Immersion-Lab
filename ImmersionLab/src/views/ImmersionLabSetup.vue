@@ -1,9 +1,7 @@
 <template>
-  <main
-    class="max-w-4xl mx-auto py-10 px-6 sm:px-8 lg:px-10 text-center bg-white shadow-xl rounded-2xl"
-  >
+  <main class="max-w-4xl mx-auto py-10 px-6 sm:px-8 lg:px-10 text-center">
     <!-- Page title -->
-    <h1 class="text-4xl font-extrabold text-gray-800 mb-6">
+    <h1 class="text-4xl font-extrabold title-text mb-6">
       Immersion Lab: Choose a Project
     </h1>
     <br />
@@ -22,7 +20,7 @@
 
       <!-- Project Search Component -->
       <ProjectSearchComponent
-        :projects="projects"
+        :projects="searchQuery.length > 0 ? projects : []"
         :is-loading-projects="isLoadingProjects"
         :error-message="errorMessage"
         @search-query-change="updateSearchQuery"
@@ -30,22 +28,55 @@
       />
       <br />
 
-      <!-- Design Options Component -->
-      <DesignOptionsComponent
-        :selected-design-option="selectedDesignOption"
-        v-model:viewer-background-color="viewerBackgroundColor"
-        :design-options="designOptions"
-        @select-design-option="selectDesignOption"
-        @view-design-option="viewDesignOption"
-      />
-      <br />
-
-      <!-- Project Details Component -->
+      <!-- Project Details Component - Moved above Design Options -->
       <ProjectDetailsComponent
         :selected-project="selectedProjectForViewer"
         :design-options="designOptions"
         @add-model-to-design-option="addModelToDesignOption"
       />
+      <br />
+
+      <!-- Design Options Component - Modified to remove select buttons and only show view buttons -->
+      <DesignOptionsComponent
+        :selected-design-option="selectedDesignOption"
+        :design-options="designOptions"
+        @view-design-option="viewDesignOption"
+      />
+      <br />
+
+      <!-- Viewer Settings Component -->
+      <div class="mb-6 bg-white p-4 rounded-lg shadow">
+        <h2 class="text-xl font-semibold text-gray-800 mb-3">
+          Viewer Settings
+        </h2>
+        <div class="flex items-center space-x-4">
+          <label
+            for="background-color"
+            class="text-sm font-medium text-gray-700"
+            >Background Color:</label
+          >
+          <input
+            type="color"
+            id="background-color"
+            v-model="viewerBackgroundColor"
+            @change="updateBackgroundColor"
+            class="h-8 w-16 rounded border border-gray-300 cursor-pointer"
+          />
+          <button
+            @click="resetBackgroundColor"
+            class="px-3 py-1 bg-gray-200 text-gray-700 text-sm rounded hover:bg-gray-300"
+          >
+            Reset
+          </button>
+          <!-- Add a button for debugging -->
+          <button
+            @click="debugViewer"
+            class="px-3 py-1 bg-gray-200 text-gray-700 text-sm rounded hover:bg-gray-300 ml-2"
+          >
+            Debug
+          </button>
+        </div>
+      </div>
 
       <!-- Viewer Component -->
       <ViewerComponent
@@ -63,18 +94,19 @@
         :design-options="designOptions"
       />
     </div>
-
     <!-- Loading indicator -->
     <div v-if="isAuthenticating" class="mt-6">
-      <p class="text-blue-600">Authenticating, please wait...</p>
+      <p class="auth-message auth-message-info">
+        Authenticating, please wait...
+      </p>
     </div>
 
     <!-- Authentication error message -->
     <div
       v-if="authError && !isAuthenticated"
-      class="mt-6 p-4 bg-red-100 rounded-md"
+      class="mt-6 auth-message auth-message-error"
     >
-      <p class="text-red-600">{{ authError }}</p>
+      <p>{{ authError }}</p>
       <button
         @click="clearAuthError"
         class="mt-2 px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
@@ -117,7 +149,7 @@ const user = computed(() => store.user);
 const isLoadingProjects = ref(false);
 const isAuthenticated = computed(() => store.isAuthenticated);
 const isAuthenticating = ref(false);
-const authError = ref<string | null>(null);
+const authError = ref<string | undefined>(undefined);
 const selectedProject = ref<{
   name: string;
   id: string;
@@ -162,7 +194,7 @@ const { executeQuery, data, error } = useQuery({
 const handleAuthClick = async () => {
   try {
     isAuthenticating.value = true;
-    authError.value = null;
+    authError.value = undefined;
 
     // Call the authenticate method with better error handling
     const authResult = await store.authenticate().catch((error) => {
@@ -197,7 +229,7 @@ const handleAuthClick = async () => {
 };
 
 const clearAuthError = () => {
-  authError.value = null;
+  authError.value = undefined;
 };
 
 // Fix the logout handler to match the original implementation
@@ -217,7 +249,7 @@ const handleLogout = async () => {
     Option2: [],
   };
   viewerInitialized.value = false;
-  authError.value = null;
+  authError.value = undefined;
 
   // Use the store's logout method
   try {
@@ -305,34 +337,180 @@ const viewDesignOption = async (option: string) => {
 const addModelToDesignOption = async (model: any, option: string) => {
   console.log(`Adding model to ${option}:`, model);
 
-  // Clone and update the design options
-  const updatedOptions = { ...designOptions.value };
+  try {
+    // Clone and update the design options
+    const updatedOptions = { ...designOptions.value };
 
-  if (option === "Option1") {
-    updatedOptions.Option1 = [model];
-  } else if (option === "Option2") {
-    updatedOptions.Option2 = [model];
+    if (option === "Option1") {
+      updatedOptions.Option1 = [model];
+    } else if (option === "Option2") {
+      updatedOptions.Option2 = [model];
+    }
+
+    // Update the design options
+    designOptions.value = updatedOptions;
+
+    // Set selected option
+    selectedDesignOption.value = option as "Option1" | "Option2" | "Both";
+
+    // Ensure viewer is initialized with better error handling
+    if (viewerComponent.value) {
+      if (!viewerInitialized.value) {
+        try {
+          await viewerComponent.value.initializeViewer();
+          viewerInitialized.value = true;
+        } catch (err) {
+          console.error("Error initializing viewer:", err);
+        }
+      }
+
+      // Try to load models with proper error handling
+      try {
+        await viewerComponent.value.loadModels();
+
+        // Apply background color after models are loaded - with delay and check
+        setTimeout(() => {
+          try {
+            if (viewerComponent.value) {
+              // Check if viewer is actually ready before applying color
+              viewerComponent.value
+                .isViewerReady()
+                .then((isReady) => {
+                  if (
+                    isReady &&
+                    viewerComponent.value?.updateViewerBackgroundColor
+                  ) {
+                    console.log(
+                      "Viewer is ready, applying background color after model load"
+                    );
+                    viewerComponent.value.updateViewerBackgroundColor(
+                      viewerBackgroundColor.value
+                    );
+                  } else {
+                    console.log(
+                      "Viewer not ready yet after model load, skipping color update"
+                    );
+                  }
+                })
+                .catch((err) => {
+                  console.error("Error checking if viewer is ready:", err);
+                });
+            }
+          } catch (error) {
+            console.error("Error applying background color after load:", error);
+          }
+        }, 1000);
+      } catch (error) {
+        console.error("Error loading models:", error);
+      }
+    }
+  } catch (err) {
+    console.error("Error in addModelToDesignOption:", err);
   }
+};
 
-  // Update the design options
-  designOptions.value = updatedOptions;
+// Update the color update function with better error handling and checking
+const updateBackgroundColor = () => {
+  console.log("Background color changed to:", viewerBackgroundColor.value);
 
-  // Set selected option
-  selectedDesignOption.value = option as "Option1" | "Option2" | "Both";
+  try {
+    if (!viewerComponent.value) {
+      console.log("Viewer component not available");
+      return;
+    }
 
-  // Ensure viewer is initialized
+    // First check if viewer is actually ready before applying color
+    viewerComponent.value
+      .isViewerReady()
+      .then((isReady) => {
+        if (isReady && viewerComponent.value?.updateViewerBackgroundColor) {
+          try {
+            console.log("Viewer is ready, applying background color now");
+            viewerComponent.value.updateViewerBackgroundColor(
+              viewerBackgroundColor.value
+            );
+          } catch (error) {
+            console.error("Error in updateViewerBackgroundColor call:", error);
+          }
+
+          // Schedule additional attempts after different delays to handle edge cases
+          // This helps with race conditions in rendering cycles
+          const retryDelays = [100, 500, 1000];
+
+          retryDelays.forEach((delay) => {
+            setTimeout(() => {
+              try {
+                if (
+                  viewerComponent.value &&
+                  viewerComponent.value.updateViewerBackgroundColor
+                ) {
+                  console.log(`Attempting color apply retry after ${delay}ms`);
+                  viewerComponent.value.updateViewerBackgroundColor(
+                    viewerBackgroundColor.value
+                  );
+                }
+              } catch (error) {
+                console.error(
+                  `Error in delayed background color update (${delay}ms):`,
+                  error
+                );
+              }
+            }, delay);
+          });
+        } else {
+          console.log("Viewer not ready yet, postponing color application");
+
+          // Schedule a delayed attempt when the viewer might be ready
+          setTimeout(() => {
+            if (viewerComponent.value) {
+              viewerComponent.value
+                .isViewerReady()
+                .then((isReady) => {
+                  if (
+                    isReady &&
+                    viewerComponent.value?.updateViewerBackgroundColor
+                  ) {
+                    console.log(
+                      "Viewer is ready now, applying delayed background color"
+                    );
+                    try {
+                      viewerComponent.value.updateViewerBackgroundColor(
+                        viewerBackgroundColor.value
+                      );
+                    } catch (error) {
+                      console.error(
+                        "Error in delayed updateViewerBackgroundColor call:",
+                        error
+                      );
+                    }
+                  }
+                })
+                .catch((err) => {
+                  console.error("Error in delayed viewer ready check:", err);
+                });
+            }
+          }, 1500);
+        }
+      })
+      .catch((err) => {
+        console.error("Error checking if viewer is ready:", err);
+      });
+  } catch (error) {
+    console.error("Error updating background color:", error);
+  }
+};
+
+const resetBackgroundColor = () => {
+  viewerBackgroundColor.value = "#ffffff";
+  updateBackgroundColor();
+};
+
+// Add the debug function
+const debugViewer = () => {
   if (viewerComponent.value) {
-    if (!viewerInitialized.value) {
-      await viewerComponent.value.initializeViewer();
-      viewerInitialized.value = true;
-    }
-
-    // No need for setTimeout, directly call loadModels with proper error handling
-    try {
-      await viewerComponent.value.loadModels();
-    } catch (error) {
-      console.error("Error loading models:", error);
-    }
+    viewerComponent.value.debugViewerStructure();
+  } else {
+    console.log("No viewer component to debug");
   }
 };
 
@@ -379,3 +557,63 @@ onMounted(async () => {
   }
 });
 </script>
+
+<style scoped>
+main {
+  background-color: #00000000;
+  border-radius: 0.5rem;
+  padding: 2rem;
+}
+
+.title-text {
+  color: var(--title-color);
+}
+
+.adaptive-heading {
+  color: var(--inverse-color);
+}
+
+.adaptive-text {
+  color: var(--inverse-color-muted);
+}
+
+@media (prefers-color-scheme: light) {
+  .adaptive-heading {
+    color: var(--vt-c-black);
+  }
+
+  .adaptive-text {
+    color: var(--vt-c-black-mute);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .adaptive-heading {
+    color: var(--vt-c-white);
+  }
+
+  .adaptive-text {
+    color: var(--vt-c-white-mute);
+  }
+}
+
+.auth-message {
+  padding: 0.75rem 1rem;
+  border-radius: 0.375rem;
+  font-weight: 500;
+  margin: 0.5rem auto;
+  max-width: 32rem;
+}
+
+.auth-message-info {
+  color: var(--color-text);
+  background-color: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.auth-message-error {
+  color: var(--color-text);
+  background-color: rgba(220, 38, 38, 0.1);
+  border: 1px solid rgba(220, 38, 38, 0.3);
+}
+</style>

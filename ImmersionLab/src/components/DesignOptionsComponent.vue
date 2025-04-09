@@ -1,22 +1,5 @@
 <template>
   <div>
-    <!-- Design options selection buttons -->
-    <div class="flex justify-center space-x-4 mt-6">
-      <button
-        @click="selectDesignOption('Option1')"
-        :class="getButtonClass('Option1')"
-      >
-        Select Design Option 1
-      </button>
-      <button
-        @click="selectDesignOption('Option2')"
-        :class="getButtonClass('Option2')"
-      >
-        Select Design Option 2
-      </button>
-    </div>
-    <br />
-
     <!-- Buttons to view the selected design options or both -->
     <div class="flex justify-center space-x-4 mt-6">
       <button
@@ -51,21 +34,6 @@
       </button>
     </div>
     <br />
-
-    <!-- Allow user to change the background color of the viewer -->
-    <div class="flex justify-center space-x-4 mt-6">
-      <label for="backgroundColor" class="font-medium"
-        >Viewer Background Colour:</label
-      >
-      <br />
-      <!-- Color picker input for changing viewer background -->
-      <input
-        v-model="viewerBackgroundColorModel"
-        type="color"
-        id="backgroundColor"
-        class="border px-4 py-2 rounded-lg"
-      />
-    </div>
   </div>
 </template>
 

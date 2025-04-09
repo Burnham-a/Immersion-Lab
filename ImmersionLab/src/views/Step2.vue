@@ -64,12 +64,12 @@ h3 {
   font-size: 1.2rem;
   font-weight: 500;
   margin-bottom: 0.4rem;
-  color: var(--vt-c-text-dark-1);
+  color: var(--title-color);
 }
 
 @media (prefers-color-scheme: light) {
   h3 {
-    color: var(--color-heading);
+    color: var(--title-color);
   }
 }
 </style>

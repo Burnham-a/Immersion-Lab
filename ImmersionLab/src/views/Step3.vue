@@ -1,6 +1,6 @@
 <template>
   <main class="max-w-3xl mx-auto py-10 px-4 sm:px-6 lg:px-8 text-center">
-    <h1 class="text-3xl font-bold leading-tight tracking-tight text-gray-900">
+    <h1 class="text-3xl font-bold leading-tight tracking-tight title-text">
       Step 3: Choose a Project
     </h1>
     <br />
@@ -136,7 +136,7 @@
     </div>
 
     <div v-else class="flex justify-center mt-6">
-      <p>Please authenticate first to access projects.</p>
+      <p class="auth-message">Please authenticate first to access projects.</p>
     </div>
   </main>
 </template>
@@ -341,5 +341,34 @@ main {
   background-color: #00000000;
   border-radius: 0.5rem;
   padding: 2rem;
+}
+
+.title-text {
+  color: var(--title-color);
+}
+
+.adaptive-heading {
+  color: var(--inverse-color);
+}
+
+@media (prefers-color-scheme: light) {
+  .adaptive-heading {
+    color: var(--vt-c-black);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .adaptive-heading {
+    color: var(--vt-c-white);
+  }
+}
+
+.auth-message {
+  color: var(--color-text);
+  font-weight: 500;
+  padding: 0.75rem 1rem;
+  border-radius: 0.375rem;
+  background-color: rgba(var(--color-background-soft-rgb), 0.7);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 </style>

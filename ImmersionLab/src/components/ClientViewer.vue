@@ -205,4 +205,8 @@ watchEffect(() => {
 .error {
   color: red;
 }
+
+.title-text {
+  color: var(--title-color);
+}
 </style>

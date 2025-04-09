@@ -9,7 +9,7 @@
       <span v-else>Sign In with Speckle</span>
     </button>
   </div>
-  <div v-if="!isAuthenticated" class="mt-6 text-gray-600">
+  <div v-if="!isAuthenticated" class="mt-6 text-gray-600 auth-message">
     Please authenticate first to access projects.
   </div>
 </template>
@@ -34,3 +34,13 @@ defineProps({
 
 defineEmits(["auth-click"]);
 </script>
+
+<style scoped>
+.auth-message {
+  color: var(--color-text);
+  font-weight: 500;
+  padding: 0.5rem;
+  border-radius: 0.375rem;
+  background-color: rgba(var(--color-background-soft-rgb), 0.7);
+}
+</style>

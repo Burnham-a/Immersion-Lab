@@ -1,6 +1,6 @@
 <template>
   <div class="space-y-6">
-    <h2 v-if="selectedProject" class="text-2xl font-bold text-gray-700">
+    <h2 v-if="selectedProject" class="text-2xl font-bold title-text">
       Viewing Project: {{ selectedProject.name }}
     </h2>
 
@@ -12,7 +12,7 @@
         selectedProject.models.items.length
       "
     >
-      <h3 class="text-xl font-semibold text-gray-600">Available Models:</h3>
+      <h3 class="text-xl font-semibold subtitle-text">Available Models:</h3>
       <ul class="space-y-3">
         <li
           v-for="model in selectedProject.models.items"
@@ -60,7 +60,7 @@
 
     <!-- Display selected models for both design options -->
     <div v-if="selectedProject">
-      <h3 class="text-xl font-semibold text-gray-600">Selected Models:</h3>
+      <h3 class="text-xl font-semibold subtitle-text">Selected Models:</h3>
       <p v-if="designOptions.Option1.length > 0" class="text-left pl-4 mt-2">
         <span class="font-medium">Design Option 1:</span>
         {{ selectedProject.name }}_{{ designOptions.Option1[0].name }}
@@ -113,3 +113,13 @@ const addModelToDesignOption = (
   emit("add-model-to-design-option", model, option);
 };
 </script>
+
+<style scoped>
+.title-text {
+  color: var(--title-color);
+}
+
+.subtitle-text {
+  color: var(--color-heading);
+}
+</style>
