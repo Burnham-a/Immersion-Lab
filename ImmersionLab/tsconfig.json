@@ -1,7 +1,7 @@
 {
-  
   "compilerOptions": {
-    "strict": true
+    "strict": true,
+    "types": ["google.maps"]
   },
   "files": [],
   "references": [
@@ -11,5 +11,5 @@
     {
       "path": "./tsconfig.app.json"
     }
-  ],
+  ]
 }

@@ -1,212 +1,224 @@
 <template>
   <div class="client-viewer">
-    <!-- Design Option Controls -->
-    <div class="design-options-controls mb-4">
-      <button
-        v-for="option in ['Option1', 'Option2', 'Both']"
-        :key="option"
-        @click="switchDesignOption(option)"
-        :class="[
-          'px-4 py-2 mx-2 rounded-lg font-medium transition',
-          currentOption === option
-            ? 'bg-orange-500 text-white'
-            : 'bg-gray-200 text-gray-800 hover:bg-gray-300',
-        ]"
-      >
-        {{ option }}
-      </button>
+    <div class="viewer-container">
+      <div
+        id="viewer-container"
+        ref="viewerContainer"
+        class="model-viewer"
+      ></div>
+      <div v-if="loading" class="loading-overlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Loading Model...</div>
+      </div>
     </div>
-
-    <!-- Viewer Container -->
-    <div ref="viewerContainer" class="viewer-container"></div>
   </div>
 </template>
 
 <script setup>
-import { ref, watchEffect, onBeforeUnmount, markRaw, nextTick } from "vue";
-import { useImmersionLabStore } from "@/stores/store-IL";
-import {
-  Viewer,
-  DefaultViewerParams,
-  SpeckleLoader,
-  CameraController,
-  SelectionExtension,
-  UrlHelper,
-} from "@speckle/viewer";
-import * as THREE from "three";
+import { ref, onMounted, onBeforeUnmount, watch } from "vue";
+import { Viewer } from "@speckle/viewer";
 
-// Store initialization
-const store = useImmersionLabStore();
+const props = defineProps({
+  projectData: {
+    type: Object,
+    required: true,
+  },
+  selectedDesignOption: {
+    type: String,
+    default: "Option1",
+  },
+  backgroundColor: {
+    type: String,
+    default: "#ffffff",
+  },
+});
 
-// Reactive variables
 const viewerContainer = ref(null);
 const viewer = ref(null);
-const viewerInitialized = ref(false);
-const selectedProject = ref(null);
-const viewerBackgroundColor = ref("#ffffff");
+const loading = ref(false);
 
-// Track the currently selected design option
-const currentOption = ref("Option1");
-
-// Function to switch between design options
-const switchDesignOption = (option) => {
-  console.log("🔄 Switching to design option:", option);
-  currentOption.value = option;
-
-  if (!selectedProject.value) {
-    console.warn("⚠️ No project selected! Skipping model loading.");
-    return;
-  }
-
-  console.log("📌 Current project details:", selectedProject.value);
-  loadModels();
-};
-
-// Cleanup before unmounting
-onBeforeUnmount(() => {
-  disposeViewer();
-});
-
-// Dispose viewer properly
-const disposeViewer = async () => {
-  if (viewer.value) {
-    try {
-      console.log("🗑️ Disposing viewer...");
-      await viewer.value.dispose();
-      viewer.value = null;
-      viewerInitialized.value = false;
-    } catch (err) {
-      console.error("❌ Error disposing viewer:", err);
-    }
-  }
-};
-
-// Initialize Viewer
+// Initialize the viewer
 const initViewer = async () => {
-  if (!viewerContainer.value || viewerInitialized.value) return;
+  if (!viewerContainer.value) return;
+
+  if (viewer.value) {
+    // Dispose existing viewer if needed
+    viewer.value.dispose();
+    viewer.value = null;
+  }
 
   try {
-    await disposeViewer();
-    await nextTick(); // Ensure DOM updates
-
-    console.log("🎥 Initializing viewer...");
-
-    const viewerInstance = new Viewer(viewerContainer.value, {
-      ...DefaultViewerParams,
-      backgroundColor: new THREE.Color(viewerBackgroundColor.value),
+    // Create a new viewer
+    viewer.value = new Viewer(viewerContainer.value, {
+      showStats: false,
+      environmentSettings: {
+        backgroundColor: props.backgroundColor || "#ffffff",
+      },
     });
 
-    await viewerInstance.init();
-    viewer.value = markRaw(viewerInstance);
-    viewer.value.createExtension(CameraController);
-    viewer.value.createExtension(SelectionExtension);
+    // Wait for viewer to initialize
+    await viewer.value.init();
+    console.log("Viewer initialized");
 
-    // viewerContainer.value.addEventListener("touchstart", () => {}, {
-    //   passive: true,
-    // });
-    // viewerContainer.value.addEventListener("wheel", () => {}, {
-    //   passive: true,
-    // });
-
-    viewerInitialized.value = true;
-    console.log("✅ Viewer initialized successfully.");
+    // Load models
+    await loadModels();
   } catch (error) {
-    console.error("❌ Error initializing viewer:", error.message, error.stack);
-
-    viewerInitialized.value = false;
+    console.error("Error initializing viewer:", error);
   }
 };
 
-// Load Model into Viewer
+// Load the models based on selected design option
 const loadModels = async () => {
-  if (!selectedProject.value || !viewer.value) {
-    console.warn("⚠️ No selected project or viewer not initialized.");
-    return;
-  }
+  if (!viewer.value || !props.projectData) return;
 
-  viewer.value.unloadAll();
-  console.log("🗑️ Unloading previous models...");
-
-  if (!selectedProject.value || !selectedProject.value.modelId) {
-    console.error("❌ No valid model or project found.");
-    return;
-  }
+  loading.value = true;
 
   try {
-    const modelId = selectedProject.value.modelId;
+    // Clear existing objects
+    await viewer.value.unloadAll();
 
-    if (!modelId) {
-      console.error("❌ No valid model ID found.");
+    const designOptions = props.projectData.designOptions;
+    let modelsToLoad = [];
+
+    if (props.selectedDesignOption === "Option1" && designOptions.Option1) {
+      modelsToLoad = designOptions.Option1;
+    } else if (
+      props.selectedDesignOption === "Option2" &&
+      designOptions.Option2
+    ) {
+      modelsToLoad = designOptions.Option2;
+    } else if (props.selectedDesignOption === "Both") {
+      modelsToLoad = [
+        ...(designOptions.Option1 || []),
+        ...(designOptions.Option2 || []),
+      ];
+    }
+
+    if (modelsToLoad.length === 0) {
+      console.warn("No models found for the selected design option");
       return;
     }
 
-    const modelUrl = `https://app.speckle.systems/projects/${selectedProject.value.id}/models/${modelId}`;
-    console.log("🌍 Fetching Speckle model from:", modelUrl);
-
-    let urls = [];
-    try {
-      urls = await UrlHelper.getResourceUrls(modelUrl);
-      if (!urls || urls.length === 0) {
-        throw new Error("No valid model URLs found.");
+    // Load each model
+    for (const model of modelsToLoad) {
+      if (model.id) {
+        console.log(`Loading model: ${model.id}`);
+        await viewer.value.loadObject(model.id);
       }
-    } catch (err) {
-      console.error("❌ Error fetching model URLs:", err.message);
-      return;
     }
 
-    for (const url of urls) {
-      console.log(`📦 Loading model from: ${url}`);
-      const loader = new SpeckleLoader(
-        viewer.value.getWorldTree(),
-        url,
-        store.authToken
-      );
-
-      await viewer.value.loadObject(loader, true);
-      console.log(`✅ Successfully loaded model: ${modelId}`);
-    }
+    // Center view on loaded objects
+    viewer.value.centerOnGeometry();
   } catch (error) {
-    console.error("❌ Error loading models:", error);
+    console.error("Error loading models:", error);
+  } finally {
+    loading.value = false;
   }
 };
 
-// Watch for authentication & viewer initialization
-watchEffect(() => {
-  if (
-    viewerContainer.value &&
-    !viewerInitialized.value &&
-    store.isAuthenticated
-  ) {
-    initViewer();
+// Update the background color
+const updateBackgroundColor = (color) => {
+  if (!viewer.value) return;
+
+  try {
+    viewer.value.setBackgroundColor(color);
+  } catch (error) {
+    console.error("Error updating background color:", error);
   }
+};
+
+// Export the method to be called from parent
+defineExpose({
+  updateBackgroundColor,
 });
 
-// Watch for project selection & load model
-watchEffect(() => {
-  console.log("🔍 Watching for project selection...");
+// Watch for changes in selected design option
+watch(
+  () => props.selectedDesignOption,
+  async () => {
+    if (viewer.value) {
+      await loadModels();
+    }
+  }
+);
 
-  if (!store.selectedProject) {
-    console.warn("⚠️ No project selected in store.");
-  } else {
-    console.log("✅ Project detected:", store.selectedProject);
-    selectedProject.value = store.selectedProject; // Ensures reactivity
-    loadModels();
+// Watch for background color changes from props
+watch(
+  () => props.backgroundColor,
+  (newColor) => {
+    updateBackgroundColor(newColor);
+  }
+);
+
+// Setup and cleanup
+onMounted(() => {
+  initViewer();
+});
+
+onBeforeUnmount(() => {
+  if (viewer.value) {
+    viewer.value.dispose();
+    viewer.value = null;
   }
 });
 </script>
 
 <style scoped>
+.client-viewer {
+  width: 100%;
+  margin: 0 auto;
+}
+
 .viewer-container {
+  position: relative;
   width: 100%;
   height: 500px;
+  border-radius: 8px;
+  overflow: hidden;
   border: 1px solid #ccc;
 }
 
-.error {
-  color: red;
+.model-viewer {
+  width: 100%;
+  height: 100%;
 }
 
-.title-text {
-  color: var(--title-color);
+.loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(0, 0, 0, 0.5);
+  color: white;
+  z-index: 10;
+}
+
+.loading-spinner {
+  border: 5px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border-top: 5px solid white;
+  width: 40px;
+  height: 40px;
+  animation: spin 1s linear infinite;
+  margin-bottom: 10px;
+}
+
+.loading-text {
+  font-size: 16px;
+  font-weight: 500;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 </style>

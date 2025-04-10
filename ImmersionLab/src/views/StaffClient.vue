@@ -1,6 +1,6 @@
 <template>
   <div class="home-container">
-    <h1 class="text-4xl font-extrabold title-text mb-6 text-shadow">
+    <h1 class="text-4xl font-extrabold title-text mb-6">
       Welcome to the Immersion Lab
     </h1>
     <div class="button-container">

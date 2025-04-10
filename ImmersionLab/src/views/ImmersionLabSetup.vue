@@ -28,11 +28,12 @@
       />
       <br />
 
-      <!-- Project Details Component - Moved above Design Options -->
+      <!-- Project Details Component - Modified to listen for model selection -->
       <ProjectDetailsComponent
         :selected-project="selectedProjectForViewer"
         :design-options="designOptions"
         @add-model-to-design-option="addModelToDesignOption"
+        @model-selected="handleModelSelected"
       />
       <br />
 
@@ -90,8 +91,13 @@
 
       <!-- Project Save Component -->
       <ProjectSaveComponent
+        ref="projectSaveComponent"
         :selected-project="selectedProject || undefined"
         :design-options="designOptions"
+        :viewer-background-color="viewerBackgroundColor"
+        v-model:selected-design-option="selectedDesignOption"
+        :current-model="currentModel"
+        @update:selected-design-option="handleDesignOptionChange"
       />
     </div>
     <!-- Loading indicator -->
@@ -173,6 +179,11 @@ const searchQuery = ref("");
 const projects = ref<StreamGridItemProps[]>([]);
 const viewerComponent = ref<InstanceType<typeof ViewerComponent> | null>(null);
 const viewerInitialized = ref(false);
+const projectSaveComponent = ref<InstanceType<
+  typeof ProjectSaveComponent
+> | null>(null);
+const selectedModel = ref<{ name: string; id: string } | null>(null);
+const currentModel = computed(() => selectedModel.value || undefined);
 
 // GraphQL Query
 const { executeQuery, data, error } = useQuery({
@@ -320,11 +331,6 @@ const updateSearchQuery = (query: string) => {
   searchQuery.value = query;
 };
 
-// Design options handling
-const selectDesignOption = (option: string) => {
-  selectedDesignOption.value = option as "Option1" | "Option2" | "Both";
-};
-
 const viewDesignOption = async (option: string) => {
   console.log(`Viewing design option: ${option}`);
   selectedDesignOption.value = option as "Option1" | "Option2" | "Both";
@@ -334,6 +340,7 @@ const viewDesignOption = async (option: string) => {
   }
 };
 
+// Update the addModelToDesignOption function
 const addModelToDesignOption = async (model: any, option: string) => {
   console.log(`Adding model to ${option}:`, model);
 
@@ -342,16 +349,29 @@ const addModelToDesignOption = async (model: any, option: string) => {
     const updatedOptions = { ...designOptions.value };
 
     if (option === "Option1") {
-      updatedOptions.Option1 = [model];
+      // Make sure the model is actually added to the array
+      updatedOptions.Option1 = [{ ...model }];
+      console.log("Updated Option1 models:", updatedOptions.Option1);
     } else if (option === "Option2") {
-      updatedOptions.Option2 = [model];
+      updatedOptions.Option2 = [{ ...model }];
+      console.log("Updated Option2 models:", updatedOptions.Option2);
     }
 
-    // Update the design options
+    // Update the design options with the new references
     designOptions.value = updatedOptions;
 
     // Set selected option
     selectedDesignOption.value = option as "Option1" | "Option2" | "Both";
+
+    // Store the selected model
+    selectedModel.value = { ...model }; // Create a new object to ensure reactivity
+
+    // After updating the model, print the full state to verify
+    console.log("Current design options state:", {
+      Option1Count: designOptions.value.Option1.length,
+      Option2Count: designOptions.value.Option2.length,
+      CurrentOption: selectedDesignOption.value,
+    });
 
     // Ensure viewer is initialized with better error handling
     if (viewerComponent.value) {
@@ -367,39 +387,6 @@ const addModelToDesignOption = async (model: any, option: string) => {
       // Try to load models with proper error handling
       try {
         await viewerComponent.value.loadModels();
-
-        // Apply background color after models are loaded - with delay and check
-        setTimeout(() => {
-          try {
-            if (viewerComponent.value) {
-              // Check if viewer is actually ready before applying color
-              viewerComponent.value
-                .isViewerReady()
-                .then((isReady) => {
-                  if (
-                    isReady &&
-                    viewerComponent.value?.updateViewerBackgroundColor
-                  ) {
-                    console.log(
-                      "Viewer is ready, applying background color after model load"
-                    );
-                    viewerComponent.value.updateViewerBackgroundColor(
-                      viewerBackgroundColor.value
-                    );
-                  } else {
-                    console.log(
-                      "Viewer not ready yet after model load, skipping color update"
-                    );
-                  }
-                })
-                .catch((err) => {
-                  console.error("Error checking if viewer is ready:", err);
-                });
-            }
-          } catch (error) {
-            console.error("Error applying background color after load:", error);
-          }
-        }, 1000);
       } catch (error) {
         console.error("Error loading models:", error);
       }
@@ -407,6 +394,12 @@ const addModelToDesignOption = async (model: any, option: string) => {
   } catch (err) {
     console.error("Error in addModelToDesignOption:", err);
   }
+};
+
+// Add a new function to handle model selection from ProjectDetailsComponent
+const handleModelSelected = (model: any) => {
+  console.log("Model selected in ProjectDetailsComponent:", model);
+  selectedModel.value = model; // Update the selected model for ProjectSaveComponent
 };
 
 // Update the color update function with better error handling and checking
@@ -511,6 +504,21 @@ const debugViewer = () => {
     viewerComponent.value.debugViewerStructure();
   } else {
     console.log("No viewer component to debug");
+  }
+};
+
+// Add a handler for design option changes
+const handleDesignOptionChange = (option: "Option1" | "Option2" | "Both") => {
+  console.log("Design option changed from ProjectSaveComponent:", option);
+  selectedDesignOption.value = option;
+
+  // If the viewer is initialized, update it to reflect the new option
+  if (viewerComponent.value && viewerInitialized.value) {
+    nextTick(() => {
+      viewerComponent.value?.loadModels().catch((err) => {
+        console.error("Error loading models after design option change:", err);
+      });
+    });
   }
 };
 

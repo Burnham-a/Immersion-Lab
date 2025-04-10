@@ -1,104 +1,129 @@
 <template>
-  <div class="design-options my-6">
-    <h2 class="text-2xl font-semibold mb-4">Design Options</h2>
+  <div class="design-options-container">
+    <h2 class="text-xl font-bold mb-4">Design Options</h2>
 
-    <div class="flex justify-center space-x-4">
+    <div class="design-options-grid">
       <button
-        @click="selectOption('Option1')"
-        class="px-4 py-2 rounded-lg transition-colors"
-        :class="
-          selectedOption === 'Option1'
-            ? 'bg-blue-600 text-white'
-            : 'bg-gray-200'
-        "
+        v-for="option in availableOptions"
+        :key="option.id"
+        @click="selectOption(option.id)"
+        :class="[
+          'design-option-button',
+          selectedOption === option.id ? 'selected' : '',
+        ]"
       >
-        Option 1
+        <div class="option-name">{{ option.name }}</div>
       </button>
-      <button
-        @click="selectOption('Option2')"
-        class="px-4 py-2 rounded-lg transition-colors"
-        :class="
-          selectedOption === 'Option2'
-            ? 'bg-blue-600 text-white'
-            : 'bg-gray-200'
-        "
-        :disabled="!hasOption2"
-      >
-        Option 2
-      </button>
-      <button
-        @click="selectOption('Both')"
-        class="px-4 py-2 rounded-lg transition-colors"
-        :class="
-          selectedOption === 'Both' ? 'bg-blue-600 text-white' : 'bg-gray-200'
-        "
-        :disabled="!hasOption2"
-      >
-        Compare Both
-      </button>
-    </div>
-
-    <div
-      v-if="!hasOption2 && selectedOption !== 'Option1'"
-      class="mt-3 text-amber-600"
-    >
-      No models available for Option 2
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch } from "vue";
+import { ref, computed, onMounted } from "vue";
 
 const props = defineProps({
   projectData: {
     type: Object,
     required: true,
   },
-  initialOption: {
-    type: String,
-    default: null,
-  },
 });
 
 const emit = defineEmits(["option-selected"]);
 
-// Initialize with saved selection or default to Option1
-const selectedOption = ref(
-  props.initialOption || props.projectData?.selectedDesignOption || "Option1"
-);
+const selectedOption = ref("Option1");
 
-// Determine if Option2 has any models
-const hasOption2 = computed(() => {
-  return props.projectData?.designOptions?.Option2?.length > 0;
+// Determine which options are available based on data
+const availableOptions = computed(() => {
+  const options = [];
+  const designOptions = props.projectData.designOptions;
+
+  if (designOptions) {
+    if (designOptions.Option1 && designOptions.Option1.length > 0) {
+      options.push({ id: "Option1", name: "Design Option 1" });
+    }
+
+    if (designOptions.Option2 && designOptions.Option2.length > 0) {
+      options.push({ id: "Option2", name: "Design Option 2" });
+    }
+
+    // Only add "Both" if both options have models
+    if (
+      designOptions.Option1 &&
+      designOptions.Option1.length > 0 &&
+      designOptions.Option2 &&
+      designOptions.Option2.length > 0
+    ) {
+      options.push({ id: "Both", name: "Compare Both Options" });
+    }
+  }
+
+  return options;
 });
 
 // Select a design option
-const selectOption = (option) => {
-  // Don't allow selecting options with no models
-  if (option === "Option2" && !hasOption2.value) return;
-  if (option === "Both" && !hasOption2.value) return;
-
-  selectedOption.value = option;
-  emit("option-selected", option);
+const selectOption = (optionId) => {
+  selectedOption.value = optionId;
+  emit("option-selected", optionId);
 };
 
-// Watch for changes in projectData
-watch(
-  () => props.projectData,
-  (newData) => {
-    if (newData?.selectedDesignOption) {
-      selectedOption.value = newData.selectedDesignOption;
-      emit("option-selected", selectedOption.value);
+// Initialize with saved selection if available
+onMounted(() => {
+  if (props.projectData.selectedDesignOption) {
+    // Check if saved option exists in available options
+    const isValidOption = availableOptions.value.some(
+      (option) => option.id === props.projectData.selectedDesignOption
+    );
+
+    if (isValidOption) {
+      selectedOption.value = props.projectData.selectedDesignOption;
+      emit("option-selected", props.projectData.selectedDesignOption);
     }
-  },
-  { immediate: true }
-);
+  }
+});
 </script>
 
 <style scoped>
-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.design-options-container {
+  padding: 1rem;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+}
+
+.design-options-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: center;
+}
+
+.design-option-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 180px;
+  height: 80px;
+  padding: 1rem;
+  border-radius: 8px;
+  background-color: white;
+  border: 2px solid #e2e8f0;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.design-option-button:hover {
+  border-color: #4f46e5;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.design-option-button.selected {
+  border-color: #4f46e5;
+  background-color: #eef2ff;
+}
+
+.option-name {
+  font-weight: 600;
+  margin-top: 0.5rem;
 }
 </style>

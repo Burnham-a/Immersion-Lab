@@ -33,6 +33,40 @@
         >
           Canvas: {{ debugInfo }}
         </div>
+
+        <!-- Object movement controls -->
+        <div
+          class="absolute top-2 right-2 bg-white/80 text-sm p-1 rounded z-50 flex gap-2 flex-col"
+        >
+          <button
+            @click="toggleObjectMovement"
+            class="px-2 py-1 rounded text-xs"
+            :class="
+              isObjectMovementEnabled
+                ? 'bg-blue-500 text-white'
+                : 'bg-gray-200 text-gray-700'
+            "
+          >
+            {{ isObjectMovementEnabled ? "Disable" : "Enable" }} Object Movement
+          </button>
+
+          <!-- Add mode selector buttons -->
+          <div v-if="isObjectMovementEnabled" class="flex gap-1 mt-1">
+            <button
+              v-for="mode in ['translate', 'rotate', 'scale'] as Array<'translate' | 'rotate' | 'scale'>"
+              :key="mode"
+              @click="setTransformMode(mode)"
+              class="px-2 py-1 rounded text-xs"
+              :class="
+                currentTransformMode === mode
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-gray-200 text-gray-700'
+              "
+            >
+              {{ mode.charAt(0).toUpperCase() + mode.slice(1) }}
+            </button>
+          </div>
+        </div>
       </div>
       <div
         v-if="isLoadingModel"
@@ -79,8 +113,241 @@ import {
   SelectionExtension,
   UrlHelper,
   ViewerEvent,
+  UpdateFlags,
+  ObjectLayers,
+  type SelectionEvent,
 } from "@speckle/viewer";
 import * as THREE from "three";
+import { Object3D, Vector3, Box3 } from "three";
+// Update TransformControls import with proper type casting
+import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
+
+// Define an extended interface for the TransformControls
+type ExtendedTransformControls = TransformControls & {
+  visible: boolean;
+  children: THREE.Object3D[];
+};
+
+// ExtendedSelection class implementation for object movement
+class ExtendedSelection extends SelectionExtension {
+  // Add static ID to properly register the extension
+  static get extensionId() {
+    return "extended-selection";
+  }
+
+  /** This object will recieve the TransformControls translation */
+  private dummyAnchor: Object3D = new Object3D();
+  /** Stock three.js gizmo */
+  private transformControls: ExtendedTransformControls | undefined;
+  private lastGizmoTranslation: Vector3 = new Vector3();
+  // Add a property to store camera controller for disable/enable during dragging
+  protected declare cameraProvider: any;
+  // Add mode support
+  private currentMode: "translate" | "rotate" | "scale" = "translate";
+
+  public init() {
+    // Perform initialization logic specific to ExtendedSelection
+
+    /** We set the layers to PROPS so that the viewer regular pipeline ignores it */
+    this.dummyAnchor.layers.set(ObjectLayers.PROPS);
+    this.viewer.getRenderer().scene.add(this.dummyAnchor);
+
+    // Store camera controller reference
+    this.cameraProvider = this.viewer.getExtension(CameraController);
+
+    // Initialize the gizmo
+    this.initGizmo();
+  }
+
+  public selectObjects(ids: Array<string>, multiSelect = false) {
+    super.selectObjects(ids, multiSelect);
+    this.updateGizmo(ids.length ? true : false);
+  }
+
+  protected onObjectClicked(selection: SelectionEvent) {
+    /** Do whatever the base extension is doing */
+    super.onObjectClicked(selection);
+    console.log("Object clicked:", selection);
+    /** Update the anchor and gizmo location */
+    this.updateGizmo(selection ? true : false);
+  }
+
+  // Add a method to set the transform mode
+  public setMode(mode: "translate" | "rotate" | "scale") {
+    if (this.transformControls) {
+      this.currentMode = mode;
+      this.transformControls.setMode(mode);
+      this.viewer.requestRender();
+    }
+  }
+
+  private initGizmo() {
+    const camera = this.viewer.getRenderer().renderingCamera;
+    if (!camera) {
+      throw new Error("Cannot init move gizmo with no camera");
+    }
+
+    /** Create a new TransformControls gizmo */
+    const gizmo = new TransformControls(
+      camera,
+      this.viewer.getRenderer().renderer.domElement
+    );
+
+    this.transformControls = gizmo as ExtendedTransformControls;
+
+    /** The gizmo creates an entire hierarchy of children internally,
+     *  and three.js objects do not inherit parent layer values, so
+     *  we must set all the child gizmo objects to the desired layer manually
+     */
+    this.transformControls.children.forEach((obj: THREE.Object3D) => {
+      obj.layers.set(ObjectLayers.PROPS);
+    });
+
+    /** Set the raycaster's layer as well */
+    this.transformControls.getRaycaster().layers.set(ObjectLayers.PROPS);
+
+    /** We set the overall gizmo size */
+    this.transformControls.setSize(0.5);
+
+    // Default to translate mode
+    this.transformControls.setMode("translate");
+
+    /** These are the TransformControls events */
+    this.transformControls.addEventListener("change", () => {
+      /** We request a render each time we interact with the gizmo */
+      this.viewer.requestRender();
+    });
+
+    this.transformControls.addEventListener(
+      "dragging-changed",
+      (event: THREE.Event) => {
+        /** When we start dragging the gizmo, we disable the camera controls
+         *  and re-enable them once we're done
+         */
+        const val = !!(event as { value?: boolean }).value;
+
+        if (this.cameraProvider) {
+          if (val) {
+            this.cameraProvider.enabled = !val;
+          } else {
+            setTimeout(() => {
+              this.cameraProvider.enabled = !val;
+            }, 100);
+          }
+        }
+      }
+    );
+
+    this.transformControls.addEventListener(
+      "objectChange",
+      this.onAnchorChanged.bind(this)
+    );
+
+    /** We add the gizmo to the scene */
+    this.viewer
+      .getRenderer()
+      .scene.add(this.transformControls as unknown as THREE.Object3D);
+  }
+
+  /** This positions the anchor and gizmo to the center of the selected objects
+   *  bounds. Note that a single selection might yield multiple individual objects
+   *  to getting selected
+   */
+  private updateGizmo(attach: boolean) {
+    const box = new Box3();
+    // Track if we have any valid selection
+    let hasValidSelection = false;
+
+    // Calculate bounds union of all selected objects
+    for (const k in this.selectionRvs) {
+      const batchObject = this.viewer
+        .getRenderer()
+        .getObject(this.selectionRvs[k]);
+      if (!batchObject) {
+        console.warn(
+          "Batch object not found for selection:",
+          this.selectionRvs[k]
+        );
+        continue;
+      }
+      box.union(batchObject.aabb);
+      hasValidSelection = true;
+    }
+
+    // If no valid selection objects found, detach gizmo
+    if (!hasValidSelection) {
+      if (this.transformControls) {
+        this.transformControls.detach();
+      }
+      return;
+    }
+
+    const center = box.getCenter(new Vector3());
+    this.dummyAnchor.position.copy(center);
+    this.lastGizmoTranslation.copy(this.dummyAnchor.position);
+
+    if (this.transformControls) {
+      // Always make sure transform controls are visible when we have a selection
+      this.transformControls.visible = true;
+
+      if (attach) {
+        console.log("Attaching TransformControls to dummy anchor");
+        this.transformControls.attach(this.dummyAnchor);
+      } else {
+        this.transformControls.detach();
+      }
+    }
+  }
+
+  /** This is where the transformation gets applied */
+  private onAnchorChanged() {
+    // Calculate the delta position from the last transformation
+    const anchorPos = new Vector3().copy(this.dummyAnchor.position);
+    const anchorPosDelta = anchorPos.sub(this.lastGizmoTranslation);
+
+    // Apply the movement to all selected objects
+    for (const k in this.selectionRvs) {
+      const batchObject = this.viewer
+        .getRenderer()
+        .getObject(this.selectionRvs[k]);
+      /** Only objects of type mesh can have batch objects.
+       *  Lines and points do not
+       */
+      if (!batchObject) continue;
+
+      /** Apply the transformation - calculate the new position */
+      const newPosition = new Vector3()
+        .copy(batchObject.translation)
+        .add(anchorPosDelta);
+
+      /** Apply the transformation */
+      batchObject.transformTRS(newPosition, undefined, undefined, undefined);
+    }
+
+    // Update our reference position
+    this.lastGizmoTranslation.copy(this.dummyAnchor.position);
+
+    // Request render update with necessary flags
+    this.viewer.requestRender(UpdateFlags.RENDER_RESET | UpdateFlags.SHADOWS);
+  }
+
+  public enableTransformControls(enabled: boolean) {
+    if (this.transformControls) {
+      if (!enabled) {
+        this.transformControls.detach();
+      }
+      // Toggle visibility of transform controls
+      this.transformControls.visible = enabled;
+      this.viewer.requestRender();
+    }
+    if (this.transformControls) {
+      console.log(
+        "TransformControls visibility:",
+        this.transformControls.visible
+      );
+    }
+  }
+}
 
 // Props definition
 const props = defineProps({
@@ -108,7 +375,6 @@ const props = defineProps({
 
 const store = useImmersionLabStore();
 
-// Refs and state variables
 const googleMap = ref<{ map?: google.maps.Map } | null>(null);
 const viewer = ref<Viewer | null>(null);
 const viewerContainer = ref<HTMLElement | null>(null);
@@ -119,6 +385,11 @@ const loadingModelIds = ref(new Set());
 const forceResetNeeded = ref(false);
 const canvasCheckTimer = ref<number | null>(null);
 const debugInfo = ref<string | null>(null);
+
+// State variables for object movement
+const isObjectMovementEnabled = ref(false);
+const objectMovementExtension = ref<ExtendedSelection | null>(null);
+const currentTransformMode = ref<"translate" | "rotate" | "scale">("translate");
 
 // Clean up resources when component is destroyed
 onBeforeUnmount(() => {
@@ -647,13 +918,24 @@ const loadModels = async () => {
       await fitCameraToScene();
       addGridHelper();
 
+      // Add a delay before initializing the object movement extension
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Make sure object movement extension is initialized after models are loaded
+      if (!objectMovementExtension.value) {
+        console.log("Initializing object movement extension after model load");
+        initObjectMovementExtension();
+      }
+
+      // Enable object movement by default
+      isObjectMovementEnabled.value = true;
+      if (objectMovementExtension.value) {
+        objectMovementExtension.value.enableTransformControls(true);
+        forceRender();
+      }
+
       // Re-apply background color after loading models - both container and scene
       updateViewerBackgroundColor(props.viewerBackgroundColor);
-
-      // Also add a delayed attempt to ensure it takes effect
-      setTimeout(() => {
-        updateViewerBackgroundColor(props.viewerBackgroundColor);
-      }, 1000);
     }
   } catch (err) {
     console.error("Error in loadModels:", err);
@@ -664,7 +946,7 @@ const loadModels = async () => {
   }
 };
 
-// Modify the initializeViewer function to set container background immediately
+// Modify the initializeViewer function to add our extended selection
 const initializeViewer = async () => {
   if (!viewerContainer.value) {
     console.log("Viewer container not available");
@@ -741,7 +1023,9 @@ const initializeViewer = async () => {
 
     // Add essential extensions
     viewer.value.createExtension(CameraController);
-    viewer.value.createExtension(SelectionExtension);
+
+    // Initialize our extended selection extension with object movement capabilities
+    initObjectMovementExtension();
 
     // Add a resize handler to ensure viewer stays properly sized
     const resizeObserver = new ResizeObserver(() => {
@@ -920,6 +1204,107 @@ const debugViewerStructure = () => {
   }
 };
 
+// Toggle object movement mode
+const toggleObjectMovement = () => {
+  isObjectMovementEnabled.value = !isObjectMovementEnabled.value;
+
+  if (!viewer.value || !objectMovementExtension.value) {
+    console.warn("Viewer or movement extension not initialized");
+    return;
+  }
+
+  objectMovementExtension.value.enableTransformControls(
+    isObjectMovementEnabled.value
+  );
+  console.log(
+    `Object movement ${isObjectMovementEnabled.value ? "enabled" : "disabled"}`
+  );
+  console.log(
+    `Object movement is now ${
+      isObjectMovementEnabled.value ? "enabled" : "disabled"
+    }`
+  );
+
+  // Force a render update to show/hide the controls
+  if (viewer.value) {
+    viewer.value.requestRender();
+  }
+};
+
+// Initialize the ExtendedSelection extension
+const initObjectMovementExtension = () => {
+  if (!viewer.value) {
+    console.warn("Cannot initialize object movement without viewer");
+    return null;
+  }
+
+  try {
+    // Create the base SelectionExtension first if it doesn't exist
+    let baseSelection = viewer.value.getExtension(SelectionExtension);
+    if (!baseSelection) {
+      console.log("Creating base SelectionExtension first");
+      baseSelection = viewer.value.createExtension(SelectionExtension);
+
+      // Give it a moment to initialize
+      viewer.value.requestRender();
+    }
+
+    // Make sure it's there before proceeding
+    if (!viewer.value.getExtension(SelectionExtension)) {
+      console.error("Failed to create base SelectionExtension");
+      return null;
+    }
+
+    // Now remove it to replace with our extended version
+    if (baseSelection && typeof baseSelection.dispose === "function") {
+      baseSelection.dispose();
+    }
+
+    // Create and initialize extended selection extension
+    console.log("Initializing object movement extension...");
+    const extension = viewer.value.createExtension(ExtendedSelection);
+    if (!extension) {
+      console.error("Failed to create ExtendedSelection extension");
+      return null;
+    }
+
+    objectMovementExtension.value = extension;
+
+    // Initially set the transform controls to the current state
+    setTimeout(() => {
+      if (extension) {
+        extension.enableTransformControls(isObjectMovementEnabled.value);
+        if (isObjectMovementEnabled.value) {
+          extension.setMode(currentTransformMode.value);
+        }
+        // Force a render to make sure everything is visible
+        viewer.value?.requestRender();
+      }
+    }, 500);
+
+    console.log("Object movement extension initialized successfully");
+    return extension;
+  } catch (err) {
+    console.error("Error initializing object movement extension:", err);
+    // If there's an error, try to create at least the base selection extension
+    try {
+      console.log("Falling back to standard SelectionExtension");
+      viewer.value.createExtension(SelectionExtension);
+    } catch (fallbackErr) {
+      console.error("Fallback also failed:", fallbackErr);
+    }
+    return null;
+  }
+};
+
+// Add a method to set the transform mode
+const setTransformMode = (mode: "translate" | "rotate" | "scale") => {
+  currentTransformMode.value = mode;
+  if (objectMovementExtension.value) {
+    objectMovementExtension.value.setMode(mode);
+  }
+};
+
 // Add this to your defineExpose
 defineExpose({
   initializeViewer,
@@ -929,7 +1314,10 @@ defineExpose({
   reinitializeViewer,
   updateViewerBackgroundColor,
   debugViewerStructure,
-  isViewerReady, // Add this new method
+  isViewerReady,
+  toggleObjectMovement,
+  setTransformMode, // Add this method
+  currentTransformMode, // Expose the current mode
 });
 </script>
 
