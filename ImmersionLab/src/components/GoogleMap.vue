@@ -159,4 +159,11 @@ const convertShapesToSpeckle = () => {
     return speckleData;
   });
 };
+
+defineProps({
+  customClass: {
+    type: String,
+    default: "",
+  },
+});
 </script>

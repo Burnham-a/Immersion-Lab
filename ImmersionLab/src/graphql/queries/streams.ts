@@ -1,7 +1,7 @@
 export const projectsQuery = `
 query UserProjectsAndModels {
   activeUser {
-    projects {
+    projects(limit: 100) {
       items {
         id
         name

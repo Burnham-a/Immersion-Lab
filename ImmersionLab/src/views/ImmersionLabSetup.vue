@@ -388,6 +388,11 @@ const viewDesignOption = async (option: string) => {
 
 // Update the addModelToDesignOption function
 const addModelToDesignOption = async (model: any, option: string) => {
+  if (!model || !option) {
+    console.error("Invalid model or option:", { model, option });
+    return;
+  }
+
   console.log(`Adding model to ${option}:`, model);
 
   try {

@@ -13,6 +13,26 @@
           background: containerBackgroundColor,
         }"
       >
+        <!-- Enhanced loading indicator with spinner -->
+        <div
+          v-if="viewerState.loading"
+          class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50"
+        >
+          <div
+            class="bg-white p-6 rounded-lg shadow-xl flex flex-col items-center"
+          >
+            <div class="spinner mb-4"></div>
+            <div class="text-gray-800 font-medium">
+              Loading model{{
+                viewerState.loadingModelIds.size > 1 ? "s" : ""
+              }}...
+            </div>
+            <div class="text-sm text-gray-600 mt-1">
+              {{ viewerState.loadingModelIds.size }} model(s) in queue
+            </div>
+          </div>
+        </div>
+
         <!-- Empty fallback element for when canvas isn't rendered properly -->
         <div
           v-if="viewerState.needsReset || !viewerState.initialized"
@@ -67,12 +87,6 @@
             </button>
           </div>
         </div>
-      </div>
-      <div
-        v-if="viewerState.loading"
-        class="text-blue-600 mt-2 absolute top-4 right-4 bg-white px-2 py-1 rounded shadow z-20"
-      >
-        <span class="inline-block animate-pulse mr-1">⏳</span> Loading model...
       </div>
       <div
         v-if="viewerState.error"
@@ -174,161 +188,193 @@ class ExtendedSelection extends SelectionExtension {
 
   /** Initialize the transform controls */
   private initGizmo() {
-    const camera = this.viewer.getRenderer().renderingCamera;
-    if (!camera) {
-      throw new Error("Cannot init move gizmo with no camera");
-    }
-
-    // Create transform controls and attach to scene
-    this.transformControls = new TransformControls(
-      camera,
-      this.viewer.getRenderer().renderer.domElement
-    ) as ExtendedTransformControls;
-
-    /** The gizmo creates an entire hierarchy of children internally,
-     * and three.js objects do not inherit parent layer values, so
-     * we must set all the child gizmo objects to the desired layer manually
-     */
-    for (let k = 0; k < this.transformControls.children.length; k++) {
-      this.transformControls.children[k].traverse((obj) => {
-        obj.layers.set(ObjectLayers.PROPS);
-      });
-    }
-
-    /** Set the raycaster's layer as well */
-    this.transformControls.getRaycaster().layers.set(ObjectLayers.PROPS);
-
-    this.transformControls.setSize(0.75); // Make it more visible
-    this.transformControls.visible = true; // Make visible by default
-    this.transformControls.enabled = true;
-
-    // Set the transform mode
-    this.transformControls.setMode(this.currentMode);
-
-    // Add transform controls to scene
     try {
-      if (!this.viewer.getRenderer().scene) {
-        console.warn("Scene not available for transform controls");
+      // Get the camera from the viewer's renderer
+      const camera = this.viewer.getRenderer().renderingCamera;
+      if (!camera) {
+        console.error("Cannot initialize gizmo: No camera available");
         return;
       }
 
-      this.viewer
-        .getRenderer()
-        .scene.add(this.transformControls as unknown as THREE.Object3D);
-    } catch (err) {
-      console.warn("Error adding transform controls to scene:", err);
-      return; // Exit if we can't add to scene
-    }
+      // Get essential elements
+      const domElement = this.viewer.getRenderer().renderer.domElement;
+      const scene = this.viewer.getRenderer().scene;
 
-    // Then attach the dummy anchor to the transform controls
-    try {
-      // Make sure dummy anchor position is at origin to start
-      this.dummyAnchor.position.set(0, 0, 0);
+      // CRITICAL FIX: Create a proper wrapper approach that Three.js will accept
+      // Create a simple wrapper that extends Object3D and contains our controls
+      class TransformControlsWrapper extends THREE.Object3D {
+        controls: TransformControls;
 
-      // Attach to transform controls and make visible
-      this.transformControls.attach(this.dummyAnchor);
+        constructor(camera: THREE.Camera, dom: HTMLElement) {
+          super();
+          this.controls = new TransformControls(camera, dom);
+
+          // Add the actual controls as a child to this wrapper object
+          super.add(this.controls as unknown as THREE.Object3D);
+        }
+
+        // Add proper TypeScript class methods (not property assignments)
+        attach(target: THREE.Object3D): this {
+          this.controls.attach(target);
+          return this;
+        }
+
+        detach(): this {
+          this.controls.detach();
+          return this;
+        }
+
+        // Override updateMatrixWorld to delegate to controls
+        updateMatrixWorld(force?: boolean): void {
+          super.updateMatrixWorld(force);
+          // Check if the method exists on controls
+          // Removed call to updateMatrixWorld as it does not exist on TransformControls
+        }
+
+        // Define proper method signatures for TransformControls
+        setMode(mode: "translate" | "rotate" | "scale"): void {
+          this.controls.setMode(mode as any);
+        }
+
+        setSize(size: number): void {
+          this.controls.setSize(size);
+        }
+
+        getRaycaster(): THREE.Raycaster {
+          return (this.controls as any).getRaycaster();
+        }
+
+        // Override addEventListener to forward events properly
+        addEventListener<T extends keyof THREE.Object3DEventMap>(
+          type: T,
+          listener: THREE.EventListener<THREE.Object3DEventMap[T], T, this>
+        ): void {
+          // Forward the event from the inner controls to this wrapper
+          this.controls.addEventListener(
+            type,
+            (event: THREE.Object3DEventMap[T]) => {
+              // Forward the event to the wrapper's listeners
+              this.dispatchEvent({ ...event, type });
+            }
+          );
+        }
+
+        // Property forwarding with proper TypeScript getter/setter definitions
+        get visible(): boolean {
+          return this.controls.visible;
+        }
+
+        set visible(value: boolean) {
+          this.controls.visible = value;
+        }
+
+        get enabled(): boolean {
+          return (this.controls as any).enabled;
+        }
+
+        set enabled(value: boolean) {
+          (this.controls as any).enabled = value;
+        }
+
+        get object(): THREE.Object3D | undefined {
+          return this.controls.object;
+        }
+
+        // Override children getter to include control's children
+        get children(): THREE.Object3D[] {
+          return [...super.children];
+        }
+      }
+
+      // Create properly wrapped controls that Three.js can accept as an Object3D
+      const wrapper = new TransformControlsWrapper(camera, domElement);
+      this.transformControls = wrapper as unknown as ExtendedTransformControls;
+
+      // Now we can safely use the wrapper methods
+      this.transformControls.setSize(0.75);
       this.transformControls.visible = true;
+      this.transformControls.enabled = true;
+      this.transformControls.setMode(this.currentMode);
 
-      // Store initial position
-      this.lastGizmoTranslation.copy(this.dummyAnchor.position);
+      // Now we can safely add it to the scene as it's a proper Object3D
+      scene.add(this.transformControls as unknown as THREE.Object3D);
+      console.log("Successfully added wrapped controls to scene");
 
-      // Make sure transform controls actually render
-      setTimeout(() => {
-        try {
-          if (this.transformControls) {
-            // Force transform controls to refresh and be visible
-            this.transformControls.visible = true;
+      // Add event listeners directly to our wrapper
+      this.transformControls.addEventListener("change", () => {
+        this.viewer.requestRender();
+      });
 
-            // Force all child elements to be visible and on correct layer
-            this.transformControls.traverse((obj: THREE.Object3D) => {
-              obj.visible = true;
-              obj.layers.set(ObjectLayers.PROPS);
-            });
-
-            // Set size again to ensure visibility
-            this.transformControls.setSize(0.75);
-
-            // Force camera update to sync with controls
-            if (this.viewer.getRenderer().renderingCamera) {
-              this.transformControls.updateMatrixWorld(true);
-            }
-
-            // Request render with explicit update flags
-            this.viewer.requestRender(UpdateFlags.RENDER_RESET);
-          }
-        } catch (e) {
-          console.warn("Error in delayed transform controls visibility:", e);
+      this.transformControls.addEventListener("dragging-changed", (event) => {
+        if (this.cameraProvider) {
+          this.cameraProvider.enabled = !event.value;
         }
-      }, 500);
-    } catch (err) {
-      console.warn("Error attaching dummy anchor:", err);
-    }
+      });
 
-    // Set up event listeners with better error handling
-    this.transformControls.addEventListener("change", () => {
-      try {
-        if (this.viewer && typeof this.viewer.requestRender === "function") {
-          this.viewer.requestRender();
-        }
-      } catch (err) {
-        console.warn("Error during transform change render:", err);
-      }
-    });
-
-    this.transformControls.addEventListener("dragging-changed", (event) => {
-      try {
-        if (!event || typeof event.value === "undefined") return;
-
-        const val = !!event.value;
-        if (val) {
-          // Disable camera controls during dragging
-          if (this.cameraProvider) {
-            // Safe disable - check if enabled property exists first
-            if (
-              this.cameraProvider &&
-              typeof this.cameraProvider === "object" &&
-              "enabled" in this.cameraProvider
-            ) {
-              this.cameraProvider.enabled = !val;
-            }
-          }
-        } else {
-          // Re-enable with a slight delay to prevent camera jump
-          setTimeout(() => {
-            if (
-              this.cameraProvider &&
-              typeof this.cameraProvider === "object" &&
-              "enabled" in this.cameraProvider
-            ) {
-              this.cameraProvider.enabled = !val;
-            }
-          }, 100);
-        }
-
-        // Force a render update
-        if (this.viewer && typeof this.viewer.requestRender === "function") {
-          this.viewer.requestRender();
-        }
-      } catch (err) {
-        console.warn("Error during transform dragging state change:", err);
-      }
-    });
-
-    // Add objectChange listener with safer implementation
-    try {
       this.transformControls.addEventListener(
         "objectChange",
         this.onAnchorChanged.bind(this)
       );
-    } catch (err) {
-      console.warn("Error adding objectChange listener:", err);
-    }
 
-    console.log("Transform controls initialized", this.transformControls);
+      // Now attach our dummy anchor object
+      this.dummyAnchor.position.set(0, 0, 0);
+      this.transformControls.attach(this.dummyAnchor);
+
+      // Set layers after attachment
+      setTimeout(() => {
+        // Setting raycaster and axis helper layers
+        if (this.transformControls) {
+          // Check if children exists and manually traverse the hierarchy
+          if (this.transformControls.children) {
+            this.transformControls.children.forEach((child) => {
+              // Use Object3D traverse method on each child instead
+              if (child && child.traverse) {
+                child.traverse((obj) => {
+                  obj.layers.set(ObjectLayers.PROPS);
+                });
+              }
+            });
+          }
+
+          // Set raycaster layer if the method exists
+          if (this.transformControls.getRaycaster) {
+            this.transformControls
+              .getRaycaster()
+              .layers.set(ObjectLayers.PROPS);
+          }
+
+          // Force a render to update visibility
+          this.viewer.requestRender(UpdateFlags.RENDER_RESET);
+        }
+      }, 100);
+
+      // Add event listeners for interaction
+      this.transformControls.addEventListener("change", () => {
+        this.viewer.requestRender();
+      });
+
+      this.transformControls.addEventListener("dragging-changed", (event) => {
+        if (this.cameraProvider) {
+          this.cameraProvider.enabled = !event.value;
+        }
+      });
+
+      this.transformControls.addEventListener(
+        "objectChange",
+        this.onAnchorChanged.bind(this)
+      );
+
+      console.log("Transform controls initialized successfully");
+
+      // Force a full render to ensure controls are visible
+      this.viewer.requestRender(UpdateFlags.RENDER_RESET);
+    } catch (error) {
+      console.error("Error initializing gizmo:", error);
+    }
   }
 
   /** Update gizmo position based on selection */
-  private updateGizmo(attach: boolean) {
+  public updateGizmo(attach: boolean) {
     if (!this.transformControls) {
       console.log("No transform controls available");
       return;
@@ -761,6 +807,12 @@ const loadModels = async () => {
     // Track already processed models to avoid duplicates
     const processedModelIds = new Set<string>();
 
+    // Update loading state with total count
+    viewerState.loadingModelIds.clear();
+    modelsToLoad.forEach((model) => {
+      if (model?.id) viewerState.loadingModelIds.add(model.id);
+    });
+
     // Process models sequentially instead of all at once
     for (const model of modelsToLoad) {
       if (!model?.id || processedModelIds.has(model.id)) continue;
@@ -788,6 +840,7 @@ const loadModels = async () => {
           ),
         ]);
 
+        viewerState.loadingModelIds.delete(modelId);
         successCount++;
       } catch (err) {
         console.warn(`Failed to load model ${modelId}:`, err);
@@ -811,10 +864,13 @@ const loadModels = async () => {
               ),
             ]);
 
+            viewerState.loadingModelIds.delete(modelId);
             successCount++;
           }
         } catch (fallbackErr) {
           console.error(`Fallback loading failed for ${modelId}:`, fallbackErr);
+          // Remove from loading queue even if it failed
+          viewerState.loadingModelIds.delete(modelId);
         }
       }
     }
@@ -848,6 +904,7 @@ const loadModels = async () => {
     viewerState.error = "Failed to load models. Please try again.";
   } finally {
     viewerState.loading = false;
+    viewerState.loadingModelIds.clear();
   }
 };
 
@@ -1040,6 +1097,9 @@ const initObjectMovementExtension = () => {
     if (extension) {
       objectMovementExtension.value = extension;
 
+      // Ensure transform controls are initialized
+      extension.init();
+
       // Register a direct listener to handle object selection events
       viewer.value.on(ViewerEvent.ObjectClicked, (event) => {
         console.log("Selection event received:", event);
@@ -1047,6 +1107,7 @@ const initObjectMovementExtension = () => {
           // Force update the gizmo after a short delay to ensure proper positioning
           setTimeout(() => {
             extension.enableTransformControls(true);
+            extension.updateGizmo(true); // Ensure gizmo is shown
             viewer.value?.requestRender();
           }, 100);
         }
@@ -1116,5 +1177,21 @@ defineExpose({
 }
 .animate-pulse {
   animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Add spinner animation */
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid rgba(0, 0, 0, 0.1);
+  border-left-color: #1a73e8;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>
