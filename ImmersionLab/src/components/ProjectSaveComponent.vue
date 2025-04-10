@@ -5,9 +5,19 @@
     </h2>
 
     <div class="flex flex-col gap-4">
+      <!-- Message when no project is selected -->
+      <div
+        v-if="!selectedProject"
+        class="bg-gray-50 border border-gray-200 rounded-md p-4 text-center mb-4"
+      >
+        <p class="text-gray-600">
+          Please select a project to save configuration.
+        </p>
+      </div>
+
       <!-- Enhanced display for selected models -->
       <div
-        v-if="selectedProject"
+        v-else-if="selectedProject"
         class="bg-blue-50 border border-blue-200 rounded-md p-4 text-left mb-4"
       >
         <h3 class="text-xl font-semibold subtitle-text mb-3">
@@ -20,7 +30,7 @@
           :class="{ 'bg-blue-100 rounded': selectedDesignOption === 'Option1' }"
         >
           <p class="font-medium">Design Option 1:</p>
-          <p v-if="designOptions.Option1.length > 0" class="pl-4 mt-1">
+          <p v-if="hasOption1Models" class="pl-4 mt-1">
             <span class="text-blue-700 font-medium">
               {{ designOptions.Option1[0]?.name || "Unnamed Model" }}
             </span>
@@ -30,7 +40,7 @@
             class="pl-4 mt-1"
           >
             <span class="text-blue-700 font-medium">{{
-              currentModel.name
+              currentModel.name || "Current Model"
             }}</span>
             <span class="text-xs text-gray-500 ml-2">(Currently selected)</span>
           </p>
@@ -45,7 +55,7 @@
           :class="{ 'bg-blue-100 rounded': selectedDesignOption === 'Option2' }"
         >
           <p class="font-medium">Design Option 2:</p>
-          <p v-if="designOptions.Option2.length > 0" class="pl-4 mt-1">
+          <p v-if="hasOption2Models" class="pl-4 mt-1">
             <span class="text-blue-700 font-medium">
               {{ designOptions.Option2[0]?.name || "Unnamed Model" }}
             </span>
@@ -55,7 +65,7 @@
             class="pl-4 mt-1"
           >
             <span class="text-blue-700 font-medium">{{
-              currentModel.name
+              currentModel.name || "Current Model"
             }}</span>
             <span class="text-xs text-gray-500 ml-2">(Currently selected)</span>
           </p>
@@ -65,6 +75,7 @@
         </div>
       </div>
 
+      <!-- Status messages -->
       <div
         v-if="savedStatus"
         :class="[
@@ -77,6 +88,7 @@
         {{ savedStatus.message }}
       </div>
 
+      <!-- Save button -->
       <button
         @click="saveProject"
         class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
@@ -90,7 +102,10 @@
       </button>
 
       <!-- Replace selection buttons with a status indicator -->
-      <div class="my-3 p-3 bg-blue-50 rounded-md border border-blue-200">
+      <div
+        v-if="selectedProject"
+        class="my-3 p-3 bg-blue-50 rounded-md border border-blue-200"
+      >
         <h3 class="font-semibold mb-1">Currently Selected:</h3>
         <div class="flex items-center">
           <div class="rounded-full w-3 h-3 bg-blue-600 mr-2"></div>
@@ -100,17 +115,16 @@
           <span class="ml-2 text-sm text-gray-600">
             ({{
               selectedDesignOption === "Option1"
-                ? (designOptions.Option1 && designOptions.Option1.length) || 0
-                : (designOptions.Option2 && designOptions.Option2.length) || 0
+                ? currentOption1Models.length
+                : currentOption2Models.length
             }}
             {{
               selectedDesignOption === "Option1" &&
-              (!designOptions.Option1 || designOptions.Option1.length === 0) &&
+              currentOption1Models.length === 0 &&
               currentModel
                 ? "+ 1 pending"
                 : selectedDesignOption === "Option2" &&
-                  (!designOptions.Option2 ||
-                    designOptions.Option2.length === 0) &&
+                  currentOption2Models.length === 0 &&
                   currentModel
                 ? "+ 1 pending"
                 : ""
@@ -125,7 +139,7 @@
 
       <!-- Display the unique project code when available -->
       <div
-        v-if="projectCode"
+        v-if="projectCode && selectedProject"
         class="text-left border p-4 rounded-md bg-green-50 my-4"
       >
         <h3 class="font-bold text-lg text-green-800 mb-2">Project Code</h3>
@@ -175,8 +189,9 @@
         </div>
       </div>
 
+      <!-- Saved Project Information -->
       <div
-        v-if="savedProjectInfo"
+        v-if="savedProjectInfo && selectedProject"
         class="text-left border p-4 rounded-md bg-gray-50"
       >
         <h3 class="font-bold">Saved Project Information</h3>
@@ -379,71 +394,45 @@ const savedProjectInfo = ref<SavedProjectInfo | null>(null);
 
 // Add computed properties to check for models in both current and saved state
 const currentOption1Models = computed(() => {
+  if (!props.designOptions || !props.designOptions.Option1) {
+    return [];
+  }
   // Ensure we're returning a copy of the array to maintain reactivity
-  const models = props.designOptions?.Option1 || [];
-  console.log("Computing currentOption1Models:", models.length, models);
-  return [...models]; // Create a new array to ensure reactivity
+  return [...props.designOptions.Option1]; // Create a new array to ensure reactivity
 });
 
 const currentOption2Models = computed(() => {
-  const models = props.designOptions?.Option2 || [];
-  console.log("Computing currentOption2Models:", models.length, models);
-  return [...models]; // Create a new array to ensure reactivity
+  if (!props.designOptions || !props.designOptions.Option2) {
+    return [];
+  }
+  return [...props.designOptions.Option2]; // Create a new array to ensure reactivity
 });
 
 // Improved checks for models in options
 const hasOption1Models = computed(() => {
-  const currentModels =
-    Array.isArray(currentOption1Models.value) &&
-    currentOption1Models.value.length > 0;
-  const savedModels =
-    savedProjectInfo.value &&
-    Array.isArray(savedProjectInfo.value.designOptions?.Option1) &&
-    savedProjectInfo.value.designOptions.Option1.length > 0;
-
-  console.log(
-    "hasOption1Models - Current:",
-    currentModels,
-    "Saved:",
-    savedModels
-  );
-  return currentModels || savedModels;
+  return currentOption1Models.value.length > 0;
 });
 
 const hasOption2Models = computed(() => {
-  const currentModels =
-    Array.isArray(currentOption2Models.value) &&
-    currentOption2Models.value.length > 0;
-  const savedModels =
-    savedProjectInfo.value &&
-    Array.isArray(savedProjectInfo.value.designOptions?.Option2) &&
-    savedProjectInfo.value.designOptions.Option2.length > 0;
+  return currentOption2Models.value.length > 0;
+});
 
-  console.log(
-    "hasOption2Models - Current:",
-    currentModels,
-    "Saved:",
-    savedModels
-  );
-  return currentModels || savedModels;
+// Check if we have a project selected
+const hasProjectSelected = computed(() => {
+  return !!props.selectedProject && !!props.selectedProject.id;
 });
 
 // Check if we can save the project - Simplified
 const canSave = computed(() => {
   // Must have a selected project with valid ID
-  if (!props.selectedProject || !props.selectedProject.id) {
+  if (!hasProjectSelected.value) {
     return false;
   }
 
   // Check if there are models in the selected design option
   const hasModelsInSelectedOption =
-    (props.selectedDesignOption === "Option1" &&
-      currentOption1Models.value.length > 0) ||
-    (props.selectedDesignOption === "Option2" &&
-      currentOption2Models.value.length > 0) ||
-    (props.selectedDesignOption === "Both" &&
-      (currentOption1Models.value.length > 0 ||
-        currentOption2Models.value.length > 0));
+    (props.selectedDesignOption === "Option1" && hasOption1Models.value) ||
+    (props.selectedDesignOption === "Option2" && hasOption2Models.value);
 
   // Allow saving if project is selected and there's at least one model
   // or if we have a current model selected that we need to save
@@ -479,7 +468,11 @@ const copyProjectCode = async () => {
 
 // Share project code with client (copy with additional context)
 const shareWithClient = async () => {
-  if (projectCode.value && props.selectedProject?.name) {
+  if (
+    projectCode.value &&
+    props.selectedProject &&
+    props.selectedProject.name
+  ) {
     try {
       const shareText = `Project: ${props.selectedProject.name}\nAccess Code: ${projectCode.value}\n\nUse this code at our Immersion Lab viewer to see your project.`;
       await navigator.clipboard.writeText(shareText);
@@ -491,6 +484,16 @@ const shareWithClient = async () => {
     } catch (err) {
       console.error("Failed to copy share text:", err);
     }
+  } else {
+    console.error("Cannot share: Missing project code or project name");
+    // Optionally add user feedback for this error case
+    savedStatus.value = {
+      type: "error",
+      message: "Cannot share: Missing project information",
+    };
+    setTimeout(() => {
+      savedStatus.value = null;
+    }, 3000);
   }
 };
 
@@ -498,12 +501,27 @@ const shareWithClient = async () => {
 watch(
   () => props.selectedDesignOption,
   (newOption) => {
-    console.log("Selected design option changed:", newOption);
+    if (!hasProjectSelected.value) return;
 
     // If we have a saved project, update it with the new selected option
     if (savedProjectInfo.value) {
-      console.log("Updating saved project info with new selected option");
       savedProjectInfo.value.selectedOption = newOption;
+    }
+  }
+);
+
+// Watch for changes in selected project to reset the component state
+watch(
+  () => props.selectedProject,
+  (newProject) => {
+    if (newProject?.id) {
+      // Load saved project data if available
+      loadSavedProjectInfo(newProject.id);
+    } else {
+      // Reset state if no project is selected
+      savedProjectInfo.value = null;
+      projectCode.value = null;
+      savedStatus.value = null;
     }
   },
   { immediate: true }
@@ -512,10 +530,8 @@ watch(
 // Watch for changes to design options to update the UI
 watch(
   () => props.designOptions,
-  (newOptions) => {
-    console.log("Design options changed:", newOptions);
-    console.log("Option1 models:", newOptions?.Option1?.length || 0);
-    console.log("Option2 models:", newOptions?.Option2?.length || 0);
+  () => {
+    if (!hasProjectSelected.value) return;
 
     // Force reactivity update by creating a new object
     if (savedProjectInfo.value) {
@@ -529,73 +545,51 @@ watch(
 watch(
   () => props.currentModel,
   (newModel) => {
-    if (newModel) {
-      console.log(
-        "Current model changed in ProjectSaveComponent:",
-        newModel.name
-      );
+    if (!hasProjectSelected.value || !newModel) return;
 
-      // Force reactivity update
-      if (savedProjectInfo.value) {
-        savedProjectInfo.value = { ...savedProjectInfo.value };
-      }
+    // Force reactivity update
+    if (savedProjectInfo.value) {
+      savedProjectInfo.value = { ...savedProjectInfo.value };
     }
   }
 );
 
-// Load previously saved project info if available
-watchEffect(() => {
-  if (props.selectedProject?.id) {
-    try {
-      const savedProject = getProjectFromLocalStorage(props.selectedProject.id);
-      if (savedProject) {
-        savedProjectInfo.value = savedProject;
-        projectCode.value = savedProject.projectCode;
-        console.log("Loaded saved project:", savedProject);
+// Function to load saved project info
+const loadSavedProjectInfo = (projectId: string) => {
+  try {
+    const savedProject = getProjectFromLocalStorage(projectId);
+    if (savedProject) {
+      savedProjectInfo.value = savedProject;
+      projectCode.value = savedProject.projectCode;
 
-        // Check if the saved selected option is different from the current one
-        // and emit an event to update the parent component
-        if (
-          savedProject.selectedOption &&
-          savedProject.selectedOption !== props.selectedDesignOption
-        ) {
-          console.log(
-            `Loaded different selected option: ${savedProject.selectedOption}, current: ${props.selectedDesignOption}`
-          );
-          emit("update:selectedDesignOption", savedProject.selectedOption);
-        }
-      } else {
-        savedProjectInfo.value = null;
-        projectCode.value = null;
+      // Check if the saved selected option is different from the current one
+      // and emit an event to update the parent component
+      if (
+        savedProject.selectedOption &&
+        savedProject.selectedOption !== props.selectedDesignOption
+      ) {
+        emit("update:selectedDesignOption", savedProject.selectedOption);
       }
-    } catch (error) {
-      console.error("Error loading saved project:", error);
+    } else {
       savedProjectInfo.value = null;
       projectCode.value = null;
     }
-  } else {
+  } catch (error) {
+    console.error("Error loading saved project:", error);
     savedProjectInfo.value = null;
     projectCode.value = null;
   }
-});
+};
 
 // Function to save the project
 const saveProject = async () => {
-  console.log("Save project triggered");
-
-  // Log the current models state before saving
-  console.log(
-    "Current Option1 models before save:",
-    props.designOptions?.Option1?.length || 0
-  );
-  console.log(
-    "Current Option2 models before save:",
-    props.designOptions?.Option2?.length || 0
-  );
-  console.log(
-    "Current selected model before save:",
-    props.currentModel?.name || "None"
-  );
+  if (!hasProjectSelected.value) {
+    savedStatus.value = {
+      type: "error",
+      message: "No project selected. Please select a project first.",
+    };
+    return;
+  }
 
   isSaving.value = true;
   savedStatus.value = null;
@@ -603,7 +597,6 @@ const saveProject = async () => {
   try {
     // Validate project before saving
     if (
-      !props.selectedProject ||
       !props.selectedProject.id ||
       typeof props.selectedProject.id !== "string"
     ) {
@@ -631,21 +624,14 @@ const saveProject = async () => {
       props.selectedDesignOption === "Option1" &&
       designOptionsCopy.Option1.length === 0
     ) {
-      console.log("Adding current model to Option1");
       designOptionsCopy.Option1.push(props.currentModel);
     } else if (
       props.currentModel &&
       props.selectedDesignOption === "Option2" &&
       designOptionsCopy.Option2.length === 0
     ) {
-      console.log("Adding current model to Option2");
       designOptionsCopy.Option2.push(props.currentModel);
     }
-
-    // Log the copied design options to verify
-    console.log("Design options being saved:", designOptionsCopy);
-    console.log("Option1 models count:", designOptionsCopy.Option1.length);
-    console.log("Option2 models count:", designOptionsCopy.Option2.length);
 
     const projectData = {
       projectId: props.selectedProject.id,
@@ -670,11 +656,7 @@ const saveProject = async () => {
     };
 
     // Refresh the saved project info
-    const savedProject = getProjectFromLocalStorage(props.selectedProject.id);
-    if (savedProject) {
-      savedProjectInfo.value = savedProject;
-      console.log("Updated saved project info:", savedProjectInfo.value);
-    }
+    loadSavedProjectInfo(props.selectedProject.id);
   } catch (error) {
     console.error("Error saving project:", error);
     savedStatus.value = {
@@ -688,20 +670,9 @@ const saveProject = async () => {
   }
 };
 
-// Expose the saveProject method to parent components
-defineExpose({ saveProject });
-
 // Add mounted hook to log initial state
 onMounted(() => {
-  console.log("ProjectSaveComponent mounted");
-  console.log(
-    "Initial Option1 models:",
-    props.designOptions?.Option1?.length || 0
-  );
-  console.log(
-    "Initial Option2 models:",
-    props.designOptions?.Option2?.length || 0
-  );
+  console.log("ProjectSaveComponent mounted - waiting for project selection");
 });
 
 // Inside the script section, add a helper computed property to get project name safely

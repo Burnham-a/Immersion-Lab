@@ -69,13 +69,6 @@
           >
             Reset
           </button>
-          <!-- Add a button for debugging -->
-          <button
-            @click="debugViewer"
-            class="px-3 py-1 bg-gray-200 text-gray-700 text-sm rounded hover:bg-gray-300 ml-2"
-          >
-            Debug
-          </button>
         </div>
       </div>
 
@@ -127,7 +120,15 @@
 console.log("Initializing ImmersionLabSetup.vue...");
 
 // Verify imports
-import { ref, computed, watchEffect, onMounted, nextTick } from "vue";
+import {
+  ref,
+  computed,
+  watchEffect,
+  onMounted,
+  onBeforeUnmount,
+  nextTick,
+  shallowRef,
+} from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 // Import the newly created components
@@ -177,13 +178,16 @@ const designOptions = ref<{
 const viewerBackgroundColor = ref<string>("#ffffff");
 const searchQuery = ref("");
 const projects = ref<StreamGridItemProps[]>([]);
-const viewerComponent = ref<InstanceType<typeof ViewerComponent> | null>(null);
+const viewerComponent = shallowRef<InstanceType<typeof ViewerComponent> | null>(
+  null
+);
 const viewerInitialized = ref(false);
 const projectSaveComponent = ref<InstanceType<
   typeof ProjectSaveComponent
 > | null>(null);
 const selectedModel = ref<{ name: string; id: string } | null>(null);
 const currentModel = computed(() => selectedModel.value || undefined);
+const isViewerOperationInProgress = ref(false);
 
 // GraphQL Query
 const { executeQuery, data, error } = useQuery({
@@ -295,6 +299,34 @@ const fetchProjects = async () => {
   }
 };
 
+const safeViewerOperation = async (
+  operation: (viewer: InstanceType<typeof ViewerComponent>) => Promise<void>
+) => {
+  if (isViewerOperationInProgress.value) {
+    console.log("Another viewer operation in progress, skipping");
+    return;
+  }
+
+  try {
+    isViewerOperationInProgress.value = true;
+
+    // First check if viewer component exists and is mounted
+    if (
+      !viewerComponent.value ||
+      !document.body.contains(viewerComponent.value.$el)
+    ) {
+      console.warn("Viewer component not available or not in document");
+      return;
+    }
+
+    await operation(viewerComponent.value);
+  } catch (error) {
+    console.error("Error in viewer operation:", error);
+  } finally {
+    isViewerOperationInProgress.value = false;
+  }
+};
+
 const handleProjectSelected = async (project: StreamGridItemProps) => {
   console.log("Project selected:", project);
 
@@ -304,6 +336,9 @@ const handleProjectSelected = async (project: StreamGridItemProps) => {
       Option1: [],
       Option2: [],
     };
+
+    // Reset viewer initialization flag to ensure proper initialization
+    viewerInitialized.value = false;
 
     const models =
       project.models && project.models.items ? project.models : { items: [] };
@@ -316,14 +351,20 @@ const handleProjectSelected = async (project: StreamGridItemProps) => {
     // Initialize the viewer after project selection
     await nextTick();
 
-    // Initialize viewer explicitly after DOM updates
-    if (viewerComponent.value) {
-      console.log("Initializing viewer after project selection");
-      await viewerComponent.value.initializeViewer();
-      viewerInitialized.value = true;
-    }
+    // Wait another tick for the conditional rendering to complete
+    await nextTick();
+
+    // Give the DOM time to fully render the viewer component
+    setTimeout(async () => {
+      await safeViewerOperation(async (viewer) => {
+        console.log("Initializing viewer after project selection");
+        await viewer.initializeViewer();
+        viewerInitialized.value = true;
+      });
+    }, 100);
   } catch (err) {
     console.error("Error handling project selection:", err);
+    viewerInitialized.value = false;
   }
 };
 
@@ -335,9 +376,14 @@ const viewDesignOption = async (option: string) => {
   console.log(`Viewing design option: ${option}`);
   selectedDesignOption.value = option as "Option1" | "Option2" | "Both";
 
-  if (viewerComponent.value && viewerInitialized.value) {
-    await viewerComponent.value.loadModels();
-  }
+  // Wait for the state update to be reflected in the DOM
+  await nextTick();
+
+  setTimeout(async () => {
+    await safeViewerOperation(async (viewer) => {
+      await viewer.loadModels();
+    });
+  }, 100);
 };
 
 // Update the addModelToDesignOption function
@@ -373,24 +419,20 @@ const addModelToDesignOption = async (model: any, option: string) => {
       CurrentOption: selectedDesignOption.value,
     });
 
-    // Ensure viewer is initialized with better error handling
-    if (viewerComponent.value) {
-      if (!viewerInitialized.value) {
-        try {
-          await viewerComponent.value.initializeViewer();
-          viewerInitialized.value = true;
-        } catch (err) {
-          console.error("Error initializing viewer:", err);
-        }
-      }
+    // Ensure all DOM updates are complete before accessing the viewer
+    await nextTick();
+    await nextTick(); // Double nextTick to ensure conditional rendering is complete
 
-      // Try to load models with proper error handling
-      try {
-        await viewerComponent.value.loadModels();
-      } catch (error) {
-        console.error("Error loading models:", error);
-      }
-    }
+    setTimeout(async () => {
+      await safeViewerOperation(async (viewer) => {
+        if (!viewerInitialized.value) {
+          await viewer.initializeViewer();
+          viewerInitialized.value = true;
+        }
+
+        await viewer.loadModels();
+      });
+    }, 150); // Slightly longer timeout to ensure DOM is ready
   } catch (err) {
     console.error("Error in addModelToDesignOption:", err);
   }
@@ -406,105 +448,17 @@ const handleModelSelected = (model: any) => {
 const updateBackgroundColor = () => {
   console.log("Background color changed to:", viewerBackgroundColor.value);
 
-  try {
-    if (!viewerComponent.value) {
-      console.log("Viewer component not available");
-      return;
-    }
-
-    // First check if viewer is actually ready before applying color
-    viewerComponent.value
-      .isViewerReady()
-      .then((isReady) => {
-        if (isReady && viewerComponent.value?.updateViewerBackgroundColor) {
-          try {
-            console.log("Viewer is ready, applying background color now");
-            viewerComponent.value.updateViewerBackgroundColor(
-              viewerBackgroundColor.value
-            );
-          } catch (error) {
-            console.error("Error in updateViewerBackgroundColor call:", error);
-          }
-
-          // Schedule additional attempts after different delays to handle edge cases
-          // This helps with race conditions in rendering cycles
-          const retryDelays = [100, 500, 1000];
-
-          retryDelays.forEach((delay) => {
-            setTimeout(() => {
-              try {
-                if (
-                  viewerComponent.value &&
-                  viewerComponent.value.updateViewerBackgroundColor
-                ) {
-                  console.log(`Attempting color apply retry after ${delay}ms`);
-                  viewerComponent.value.updateViewerBackgroundColor(
-                    viewerBackgroundColor.value
-                  );
-                }
-              } catch (error) {
-                console.error(
-                  `Error in delayed background color update (${delay}ms):`,
-                  error
-                );
-              }
-            }, delay);
-          });
-        } else {
-          console.log("Viewer not ready yet, postponing color application");
-
-          // Schedule a delayed attempt when the viewer might be ready
-          setTimeout(() => {
-            if (viewerComponent.value) {
-              viewerComponent.value
-                .isViewerReady()
-                .then((isReady) => {
-                  if (
-                    isReady &&
-                    viewerComponent.value?.updateViewerBackgroundColor
-                  ) {
-                    console.log(
-                      "Viewer is ready now, applying delayed background color"
-                    );
-                    try {
-                      viewerComponent.value.updateViewerBackgroundColor(
-                        viewerBackgroundColor.value
-                      );
-                    } catch (error) {
-                      console.error(
-                        "Error in delayed updateViewerBackgroundColor call:",
-                        error
-                      );
-                    }
-                  }
-                })
-                .catch((err) => {
-                  console.error("Error in delayed viewer ready check:", err);
-                });
-            }
-          }, 1500);
-        }
-      })
-      .catch((err) => {
-        console.error("Error checking if viewer is ready:", err);
-      });
-  } catch (error) {
-    console.error("Error updating background color:", error);
-  }
+  // Use the safe viewer operation with a timeout to ensure the DOM is ready
+  setTimeout(async () => {
+    await safeViewerOperation(async (viewer) => {
+      viewer.updateViewerBackgroundColor(viewerBackgroundColor.value);
+    });
+  }, 50);
 };
 
 const resetBackgroundColor = () => {
   viewerBackgroundColor.value = "#ffffff";
   updateBackgroundColor();
-};
-
-// Add the debug function
-const debugViewer = () => {
-  if (viewerComponent.value) {
-    viewerComponent.value.debugViewerStructure();
-  } else {
-    console.log("No viewer component to debug");
-  }
 };
 
 // Add a handler for design option changes
@@ -513,13 +467,11 @@ const handleDesignOptionChange = (option: "Option1" | "Option2" | "Both") => {
   selectedDesignOption.value = option;
 
   // If the viewer is initialized, update it to reflect the new option
-  if (viewerComponent.value && viewerInitialized.value) {
-    nextTick(() => {
-      viewerComponent.value?.loadModels().catch((err) => {
-        console.error("Error loading models after design option change:", err);
-      });
+  setTimeout(async () => {
+    await safeViewerOperation(async (viewer) => {
+      await viewer.loadModels();
     });
-  }
+  }, 100);
 };
 
 // Watch for data changes
@@ -563,6 +515,29 @@ onMounted(async () => {
   } else {
     console.log("Not authenticated yet, waiting for user login");
   }
+});
+
+// Clean up resources properly when the component is unmounted
+onBeforeUnmount(() => {
+  // Clear all viewer references and release resources
+  try {
+    if (viewerComponent.value) {
+      viewerComponent.value.disposeViewer();
+    }
+  } catch (error) {
+    console.error("Error during viewer component cleanup:", error);
+  }
+
+  // Reset all state
+  viewerInitialized.value = false;
+  selectedProject.value = null;
+  isViewerOperationInProgress.value = false;
+
+  // Clean up design options
+  designOptions.value = {
+    Option1: [],
+    Option2: [],
+  };
 });
 </script>
 

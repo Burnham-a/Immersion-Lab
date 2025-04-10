@@ -15,7 +15,7 @@
       >
         <!-- Empty fallback element for when canvas isn't rendered properly -->
         <div
-          v-if="forceResetNeeded || !viewerInitialized"
+          v-if="viewerState.needsReset || !viewerState.initialized"
           class="absolute inset-0 flex items-center justify-center bg-gray-100 bg-opacity-50"
         >
           <button
@@ -69,16 +69,16 @@
         </div>
       </div>
       <div
-        v-if="isLoadingModel"
+        v-if="viewerState.loading"
         class="text-blue-600 mt-2 absolute top-4 right-4 bg-white px-2 py-1 rounded shadow z-20"
       >
         <span class="inline-block animate-pulse mr-1">⏳</span> Loading model...
       </div>
       <div
-        v-if="errorMessage"
+        v-if="viewerState.error"
         class="text-red-600 mt-2 bg-white/80 p-1 rounded"
       >
-        {{ errorMessage }}
+        {{ viewerState.error }}
       </div>
     </div>
 
@@ -101,7 +101,9 @@ import {
   onMounted,
   nextTick,
   markRaw,
-  computed,
+  reactive,
+  onUnmounted,
+  onBeforeMount,
 } from "vue";
 import GoogleMap from "@/components/GoogleMap.vue";
 import { useImmersionLabStore } from "@/stores/store-IL";
@@ -119,35 +121,46 @@ import {
 } from "@speckle/viewer";
 import * as THREE from "three";
 import { Object3D, Vector3, Box3 } from "three";
-// Update TransformControls import with proper type casting
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 
 // Define an extended interface for the TransformControls
 type ExtendedTransformControls = TransformControls & {
   visible: boolean;
   children: THREE.Object3D[];
+  traverse: (callback: (object: THREE.Object3D) => void) => void;
+  updateMatrixWorld: (force?: boolean) => void;
+  object?: THREE.Object3D;
 };
+
+// Create a reactive state object to manage viewer state in one place
+const viewerState = reactive({
+  initialized: false,
+  loading: false,
+  needsReset: false,
+  error: null as string | null,
+  loadingModelIds: new Set<string>(),
+});
 
 // ExtendedSelection class implementation for object movement
 class ExtendedSelection extends SelectionExtension {
+  /** Store selected objects */
+  public selectionRvs: Record<string, any> = {};
   // Add static ID to properly register the extension
   static get extensionId() {
     return "extended-selection";
   }
 
-  /** This object will recieve the TransformControls translation */
+  /** This object will receive the TransformControls translation */
   private dummyAnchor: Object3D = new Object3D();
   /** Stock three.js gizmo */
   private transformControls: ExtendedTransformControls | undefined;
   private lastGizmoTranslation: Vector3 = new Vector3();
   // Add a property to store camera controller for disable/enable during dragging
-  protected declare cameraProvider: any;
+  protected cameraProvider: any = null;
   // Add mode support
   private currentMode: "translate" | "rotate" | "scale" = "translate";
 
   public init() {
-    // Perform initialization logic specific to ExtendedSelection
-
     /** We set the layers to PROPS so that the viewer regular pipeline ignores it */
     this.dummyAnchor.layers.set(ObjectLayers.PROPS);
     this.viewer.getRenderer().scene.add(this.dummyAnchor);
@@ -159,17 +172,268 @@ class ExtendedSelection extends SelectionExtension {
     this.initGizmo();
   }
 
-  public selectObjects(ids: Array<string>, multiSelect = false) {
-    super.selectObjects(ids, multiSelect);
-    this.updateGizmo(ids.length ? true : false);
+  /** Initialize the transform controls */
+  private initGizmo() {
+    const camera = this.viewer.getRenderer().renderingCamera;
+    if (!camera) {
+      throw new Error("Cannot init move gizmo with no camera");
+    }
+
+    // Create transform controls and attach to scene
+    this.transformControls = new TransformControls(
+      camera,
+      this.viewer.getRenderer().renderer.domElement
+    ) as ExtendedTransformControls;
+
+    /** The gizmo creates an entire hierarchy of children internally,
+     * and three.js objects do not inherit parent layer values, so
+     * we must set all the child gizmo objects to the desired layer manually
+     */
+    for (let k = 0; k < this.transformControls.children.length; k++) {
+      this.transformControls.children[k].traverse((obj) => {
+        obj.layers.set(ObjectLayers.PROPS);
+      });
+    }
+
+    /** Set the raycaster's layer as well */
+    this.transformControls.getRaycaster().layers.set(ObjectLayers.PROPS);
+
+    this.transformControls.setSize(0.75); // Make it more visible
+    this.transformControls.visible = true; // Make visible by default
+    this.transformControls.enabled = true;
+
+    // Set the transform mode
+    this.transformControls.setMode(this.currentMode);
+
+    // Add transform controls to scene
+    try {
+      if (!this.viewer.getRenderer().scene) {
+        console.warn("Scene not available for transform controls");
+        return;
+      }
+
+      this.viewer
+        .getRenderer()
+        .scene.add(this.transformControls as unknown as THREE.Object3D);
+    } catch (err) {
+      console.warn("Error adding transform controls to scene:", err);
+      return; // Exit if we can't add to scene
+    }
+
+    // Then attach the dummy anchor to the transform controls
+    try {
+      // Make sure dummy anchor position is at origin to start
+      this.dummyAnchor.position.set(0, 0, 0);
+
+      // Attach to transform controls and make visible
+      this.transformControls.attach(this.dummyAnchor);
+      this.transformControls.visible = true;
+
+      // Store initial position
+      this.lastGizmoTranslation.copy(this.dummyAnchor.position);
+
+      // Make sure transform controls actually render
+      setTimeout(() => {
+        try {
+          if (this.transformControls) {
+            // Force transform controls to refresh and be visible
+            this.transformControls.visible = true;
+
+            // Force all child elements to be visible and on correct layer
+            this.transformControls.traverse((obj: THREE.Object3D) => {
+              obj.visible = true;
+              obj.layers.set(ObjectLayers.PROPS);
+            });
+
+            // Set size again to ensure visibility
+            this.transformControls.setSize(0.75);
+
+            // Force camera update to sync with controls
+            if (this.viewer.getRenderer().renderingCamera) {
+              this.transformControls.updateMatrixWorld(true);
+            }
+
+            // Request render with explicit update flags
+            this.viewer.requestRender(UpdateFlags.RENDER_RESET);
+          }
+        } catch (e) {
+          console.warn("Error in delayed transform controls visibility:", e);
+        }
+      }, 500);
+    } catch (err) {
+      console.warn("Error attaching dummy anchor:", err);
+    }
+
+    // Set up event listeners with better error handling
+    this.transformControls.addEventListener("change", () => {
+      try {
+        if (this.viewer && typeof this.viewer.requestRender === "function") {
+          this.viewer.requestRender();
+        }
+      } catch (err) {
+        console.warn("Error during transform change render:", err);
+      }
+    });
+
+    this.transformControls.addEventListener("dragging-changed", (event) => {
+      try {
+        if (!event || typeof event.value === "undefined") return;
+
+        const val = !!event.value;
+        if (val) {
+          // Disable camera controls during dragging
+          if (this.cameraProvider) {
+            // Safe disable - check if enabled property exists first
+            if (
+              this.cameraProvider &&
+              typeof this.cameraProvider === "object" &&
+              "enabled" in this.cameraProvider
+            ) {
+              this.cameraProvider.enabled = !val;
+            }
+          }
+        } else {
+          // Re-enable with a slight delay to prevent camera jump
+          setTimeout(() => {
+            if (
+              this.cameraProvider &&
+              typeof this.cameraProvider === "object" &&
+              "enabled" in this.cameraProvider
+            ) {
+              this.cameraProvider.enabled = !val;
+            }
+          }, 100);
+        }
+
+        // Force a render update
+        if (this.viewer && typeof this.viewer.requestRender === "function") {
+          this.viewer.requestRender();
+        }
+      } catch (err) {
+        console.warn("Error during transform dragging state change:", err);
+      }
+    });
+
+    // Add objectChange listener with safer implementation
+    try {
+      this.transformControls.addEventListener(
+        "objectChange",
+        this.onAnchorChanged.bind(this)
+      );
+    } catch (err) {
+      console.warn("Error adding objectChange listener:", err);
+    }
+
+    console.log("Transform controls initialized", this.transformControls);
   }
 
+  /** Update gizmo position based on selection */
+  private updateGizmo(attach: boolean) {
+    if (!this.transformControls) {
+      console.log("No transform controls available");
+      return;
+    }
+
+    try {
+      // If not visible or no transform controls, hide and return
+      if (!attach || !isObjectMovementEnabled.value) {
+        if (this.transformControls) {
+          this.transformControls.detach();
+          this.transformControls.visible = false;
+        }
+        return;
+      }
+
+      // Get object IDs of selected objects
+      const selectedIds = Object.keys(this.selectionRvs);
+      if (selectedIds.length === 0) {
+        if (this.transformControls) {
+          this.transformControls.detach();
+          this.transformControls.visible = false;
+        }
+        return;
+      }
+
+      // Calculate bounding box for all selected objects
+      const box = new Box3();
+      let hasValidObjects = false;
+
+      for (const id of selectedIds) {
+        const batchObject = this.viewer
+          .getRenderer()
+          ?.getObject(this.selectionRvs[id]);
+
+        if (batchObject) {
+          // Try to use the object's own AABB if available
+          if (batchObject.aabb) {
+            box.union(batchObject.aabb);
+            hasValidObjects = true;
+          } else {
+            // Fall back to calculating from the object if needed
+            try {
+              const objectBox = new Box3().setFromObject(
+                batchObject as unknown as THREE.Object3D
+              );
+              if (!objectBox.isEmpty()) {
+                box.union(objectBox);
+                hasValidObjects = true;
+              }
+            } catch (e) {
+              console.warn("Error setting box from object:", e);
+            }
+          }
+        }
+      }
+
+      if (!hasValidObjects || box.isEmpty()) {
+        if (this.transformControls) {
+          this.transformControls.detach();
+          this.transformControls.visible = false;
+        }
+        return;
+      }
+
+      // Get center of bounding box
+      const center = new Vector3();
+      box.getCenter(center);
+
+      // Update dummy anchor position
+      this.dummyAnchor.position.copy(center);
+      this.lastGizmoTranslation.copy(center);
+
+      // Make sure transform controls are attached and visible
+      if (this.transformControls) {
+        this.transformControls.attach(this.dummyAnchor);
+        this.transformControls.visible = true;
+      }
+
+      // Force render update
+      this.viewer.requestRender();
+    } catch (err) {
+      console.warn("Error updating transform gizmo:", err);
+    }
+  }
+
+  public selectObjects(ids: Array<string>, multiSelect = false) {
+    super.selectObjects(ids, multiSelect);
+    this.updateGizmo(ids.length > 0);
+  }
+
+  /** This is called when objects are clicked */
   protected onObjectClicked(selection: SelectionEvent) {
     /** Do whatever the base extension is doing */
     super.onObjectClicked(selection);
-    console.log("Object clicked:", selection);
-    /** Update the anchor and gizmo location */
-    this.updateGizmo(selection ? true : false);
+
+    // Update the gizmo based on selection
+    if (
+      selection &&
+      Array.isArray(selection.multiple) &&
+      selection.multiple.length > 0
+    ) {
+      this.updateGizmo(true);
+    } else {
+      this.updateGizmo(false);
+    }
   }
 
   // Add a method to set the transform mode
@@ -181,144 +445,25 @@ class ExtendedSelection extends SelectionExtension {
     }
   }
 
-  private initGizmo() {
-    const camera = this.viewer.getRenderer().renderingCamera;
-    if (!camera) {
-      throw new Error("Cannot init move gizmo with no camera");
-    }
-
-    /** Create a new TransformControls gizmo */
-    const gizmo = new TransformControls(
-      camera,
-      this.viewer.getRenderer().renderer.domElement
-    );
-
-    this.transformControls = gizmo as ExtendedTransformControls;
-
-    /** The gizmo creates an entire hierarchy of children internally,
-     *  and three.js objects do not inherit parent layer values, so
-     *  we must set all the child gizmo objects to the desired layer manually
-     */
-    this.transformControls.children.forEach((obj: THREE.Object3D) => {
-      obj.layers.set(ObjectLayers.PROPS);
-    });
-
-    /** Set the raycaster's layer as well */
-    this.transformControls.getRaycaster().layers.set(ObjectLayers.PROPS);
-
-    /** We set the overall gizmo size */
-    this.transformControls.setSize(0.5);
-
-    // Default to translate mode
-    this.transformControls.setMode("translate");
-
-    /** These are the TransformControls events */
-    this.transformControls.addEventListener("change", () => {
-      /** We request a render each time we interact with the gizmo */
-      this.viewer.requestRender();
-    });
-
-    this.transformControls.addEventListener(
-      "dragging-changed",
-      (event: THREE.Event) => {
-        /** When we start dragging the gizmo, we disable the camera controls
-         *  and re-enable them once we're done
-         */
-        const val = !!(event as { value?: boolean }).value;
-
-        if (this.cameraProvider) {
-          if (val) {
-            this.cameraProvider.enabled = !val;
-          } else {
-            setTimeout(() => {
-              this.cameraProvider.enabled = !val;
-            }, 100);
-          }
-        }
-      }
-    );
-
-    this.transformControls.addEventListener(
-      "objectChange",
-      this.onAnchorChanged.bind(this)
-    );
-
-    /** We add the gizmo to the scene */
-    this.viewer
-      .getRenderer()
-      .scene.add(this.transformControls as unknown as THREE.Object3D);
-  }
-
-  /** This positions the anchor and gizmo to the center of the selected objects
-   *  bounds. Note that a single selection might yield multiple individual objects
-   *  to getting selected
-   */
-  private updateGizmo(attach: boolean) {
-    const box = new Box3();
-    // Track if we have any valid selection
-    let hasValidSelection = false;
-
-    // Calculate bounds union of all selected objects
-    for (const k in this.selectionRvs) {
-      const batchObject = this.viewer
-        .getRenderer()
-        .getObject(this.selectionRvs[k]);
-      if (!batchObject) {
-        console.warn(
-          "Batch object not found for selection:",
-          this.selectionRvs[k]
-        );
-        continue;
-      }
-      box.union(batchObject.aabb);
-      hasValidSelection = true;
-    }
-
-    // If no valid selection objects found, detach gizmo
-    if (!hasValidSelection) {
-      if (this.transformControls) {
-        this.transformControls.detach();
-      }
-      return;
-    }
-
-    const center = box.getCenter(new Vector3());
-    this.dummyAnchor.position.copy(center);
-    this.lastGizmoTranslation.copy(this.dummyAnchor.position);
-
-    if (this.transformControls) {
-      // Always make sure transform controls are visible when we have a selection
-      this.transformControls.visible = true;
-
-      if (attach) {
-        console.log("Attaching TransformControls to dummy anchor");
-        this.transformControls.attach(this.dummyAnchor);
-      } else {
-        this.transformControls.detach();
-      }
-    }
-  }
-
   /** This is where the transformation gets applied */
   private onAnchorChanged() {
     // Calculate the delta position from the last transformation
     const anchorPos = new Vector3().copy(this.dummyAnchor.position);
-    const anchorPosDelta = anchorPos.sub(this.lastGizmoTranslation);
+    const anchorPosDelta = anchorPos.clone().sub(this.lastGizmoTranslation);
 
     // Apply the movement to all selected objects
     for (const k in this.selectionRvs) {
       const batchObject = this.viewer
         .getRenderer()
         .getObject(this.selectionRvs[k]);
+
       /** Only objects of type mesh can have batch objects.
        *  Lines and points do not
        */
       if (!batchObject) continue;
 
       /** Apply the transformation - calculate the new position */
-      const newPosition = new Vector3()
-        .copy(batchObject.translation)
-        .add(anchorPosDelta);
+      const newPosition = anchorPosDelta.clone().add(batchObject.translation);
 
       /** Apply the transformation */
       batchObject.transformTRS(newPosition, undefined, undefined, undefined);
@@ -335,16 +480,15 @@ class ExtendedSelection extends SelectionExtension {
     if (this.transformControls) {
       if (!enabled) {
         this.transformControls.detach();
+        this.transformControls.visible = false;
+      } else {
+        // When enabling, if we have selected objects, show the gizmo again
+        const selectedIds = Object.keys(this.selectionRvs);
+        if (selectedIds.length > 0) {
+          this.updateGizmo(true);
+        }
       }
-      // Toggle visibility of transform controls
-      this.transformControls.visible = enabled;
       this.viewer.requestRender();
-    }
-    if (this.transformControls) {
-      console.log(
-        "TransformControls visibility:",
-        this.transformControls.visible
-      );
     }
   }
 }
@@ -378,45 +522,62 @@ const store = useImmersionLabStore();
 const googleMap = ref<{ map?: google.maps.Map } | null>(null);
 const viewer = ref<Viewer | null>(null);
 const viewerContainer = ref<HTMLElement | null>(null);
-const viewerInitialized = ref(false);
-const isLoadingModel = ref(false);
-const errorMessage = ref<string | null>(null);
-const loadingModelIds = ref(new Set());
-const forceResetNeeded = ref(false);
-const canvasCheckTimer = ref<number | null>(null);
 const debugInfo = ref<string | null>(null);
+const canvasCheckTimer = ref<number | null>(null);
 
 // State variables for object movement
 const isObjectMovementEnabled = ref(false);
 const objectMovementExtension = ref<ExtendedSelection | null>(null);
 const currentTransformMode = ref<"translate" | "rotate" | "scale">("translate");
 
-// Clean up resources when component is destroyed
-onBeforeUnmount(() => {
+// Centralize all cleanup to prevent memory leaks
+const cleanupResources = () => {
+  // Clear timers
   if (canvasCheckTimer.value) {
     clearInterval(canvasCheckTimer.value);
     canvasCheckTimer.value = null;
   }
+
+  // Clean up viewer
   disposeViewer();
+};
+
+// Set up component lifecycle hooks
+onBeforeMount(() => {
+  // Reset all state when component is mounted
+  viewerState.initialized = false;
+  viewerState.loading = false;
+  viewerState.needsReset = false;
+  viewerState.error = null;
+  viewerState.loadingModelIds.clear();
 });
 
-// Initialize the viewer when the component is mounted
 onMounted(async () => {
-  console.log("ViewerComponent mounted, initializing viewer...");
+  console.log("ViewerComponent mounted");
 
   // Wait for DOM to settle
   await new Promise((resolve) => setTimeout(resolve, 200));
-  await initializeViewer();
 
-  // Start checking if canvas is actually visible/rendered
-  startCanvasChecks();
+  try {
+    await initializeViewer();
 
-  if (props.selectedProject) {
-    await loadModels();
+    // Start checking if canvas is actually visible/rendered
+    startCanvasChecks();
+
+    if (props.selectedProject) {
+      await loadModels();
+    }
+  } catch (err) {
+    console.error("Error during component mount:", err);
+    viewerState.error = "Failed to initialize viewer";
   }
 });
 
-// Function to check if the canvas is properly displayed
+// Ensure cleanup on both unmount events
+onBeforeUnmount(cleanupResources);
+onUnmounted(cleanupResources);
+
+// Function to check if the canvas is properly displayed - simplified
 const startCanvasChecks = () => {
   // Clear any existing timer
   if (canvasCheckTimer.value) {
@@ -427,51 +588,60 @@ const startCanvasChecks = () => {
   canvasCheckTimer.value = setInterval(() => {
     if (!viewerContainer.value) return;
 
+    // Skip checks if component is being unmounted
+    if (!viewerContainer.value.isConnected) {
+      clearInterval(canvasCheckTimer.value as number);
+      return;
+    }
+
     const canvas = viewerContainer.value.querySelector("canvas");
     if (!canvas) {
-      console.warn("Canvas element not found in viewer container");
-      debugInfo.value = "Not found";
-      forceResetNeeded.value = true;
+      debugInfo.value = "Canvas not found";
+      viewerState.needsReset = true;
       return;
     }
 
     // Check if canvas has proper dimensions and is visible
     const canvasStyle = window.getComputedStyle(canvas);
-    debugInfo.value = `${canvas.width}x${canvas.height} | ${canvasStyle.position} | Z:${canvasStyle.zIndex}`;
+    debugInfo.value = `${canvas.width}x${canvas.height}`;
 
     if (canvas.width === 0 || canvas.height === 0) {
-      console.warn("Canvas has zero width/height, needs reset");
-      forceResetNeeded.value = true;
-    }
-
-    if (canvasStyle.display === "none" || canvasStyle.visibility === "hidden") {
-      console.warn("Canvas is hidden, needs reset");
-      forceResetNeeded.value = true;
+      viewerState.needsReset = true;
+      return;
     }
 
     // Check if viewer is initialized but not showing content
-    if (viewerInitialized.value && forceResetNeeded.value) {
-      console.log("Forcing viewer reset due to detected issues");
+    if (
+      viewerState.initialized &&
+      viewerState.needsReset &&
+      !viewerState.loading
+    ) {
+      console.log("Canvas needs reset - attempting to fix");
       reinitializeViewer();
-      forceResetNeeded.value = false;
     }
-  }, 2000); // Check every 2 seconds
+  }, 3000); // Check less frequently
 };
 
-// Add a forced re-initialization method
+// Add a forced re-initialization method - simplified
 const reinitializeViewer = async () => {
-  console.log("Forcing viewer re-initialization...");
-  await disposeViewer();
-  await nextTick();
+  try {
+    console.log("Forcing viewer re-initialization...");
+    viewerState.needsReset = false;
 
-  // Ensure container is ready
-  await new Promise((resolve) => setTimeout(resolve, 300));
+    await disposeViewer();
+    await nextTick();
 
-  const success = await initializeViewer();
+    // Ensure container is ready
+    await new Promise((resolve) => setTimeout(resolve, 300));
 
-  if (success && props.selectedProject) {
-    console.log("Reloading models after forced re-initialization");
-    await loadModels();
+    await initializeViewer();
+
+    if (props.selectedProject) {
+      await loadModels();
+    }
+  } catch (err) {
+    console.error("Error during viewer reinitialization:", err);
+    viewerState.error = "Failed to reinitialize viewer";
   }
 };
 
@@ -479,8 +649,6 @@ const reinitializeViewer = async () => {
 const disposeViewer = async () => {
   try {
     if (viewer.value) {
-      console.log("Disposing viewer instance...");
-
       // Clean up resize observer if it exists
       if ((viewer.value as any).userData?.resizeObserver) {
         (viewer.value as any).userData.resizeObserver.disconnect();
@@ -488,7 +656,8 @@ const disposeViewer = async () => {
 
       await viewer.value.dispose();
       viewer.value = null;
-      viewerInitialized.value = false;
+      viewerState.initialized = false;
+      objectMovementExtension.value = null;
     }
   } catch (err) {
     console.error("Error disposing viewer:", err);
@@ -499,44 +668,21 @@ const disposeViewer = async () => {
 watch(
   () => props.viewerBackgroundColor,
   (newColor) => {
-    console.log("viewerBackgroundColor prop changed to:", newColor);
-
-    if (!viewerInitialized.value || !viewer.value) {
-      console.log("Viewer not initialized yet, will apply color when ready");
-      return;
+    if (viewerContainer.value) {
+      viewerContainer.value.style.backgroundColor = newColor;
     }
 
-    // Call our updated function
-    updateViewerBackgroundColor(newColor);
-  },
-  { immediate: true } // This will run once on component creation
-);
-
-// Watch for changes in the container background color
-watch(
-  () => props.containerBackgroundColor,
-  (newColor) => {
-    console.log("Container background color updated to:", newColor);
-  }
-);
-
-// Watch for changes in selected design option to update the viewer
-watch(
-  () => props.selectedDesignOption,
-  async (newOption) => {
-    console.log(`Design option changed to: ${newOption}, reloading models`);
-    if (props.selectedProject && viewerInitialized.value) {
-      await loadModels();
+    if (viewerState.initialized && viewer.value) {
+      updateViewerBackgroundColor(newColor);
     }
   }
 );
 
-// Watch for changes in design options to update the viewer
+// Watch for changes in the selected design option to update the viewer
 watch(
-  () => props.designOptions,
+  [() => props.selectedDesignOption, () => props.designOptions],
   async () => {
-    console.log("Design options changed, reloading models");
-    if (props.selectedProject && viewerInitialized.value) {
+    if (props.selectedProject && viewerState.initialized) {
       await loadModels();
     }
   },
@@ -546,505 +692,224 @@ watch(
 // Add a safe color validator function
 const isValidColor = (color: string): boolean => {
   try {
-    // Check if the color can be parsed by THREE.js
     new THREE.Color(color);
     return true;
   } catch (e) {
-    console.warn(`Invalid color value: ${color}`, e);
+    console.warn(`Invalid color value: ${color}`);
     return false;
   }
 };
 
-// Modify the updateViewerBackgroundColor function to use the direct container style approach
-const updateViewerBackgroundColor = async (color: string) => {
-  // Add this DEBUG section at the beginning of the function
-  console.log("DEBUG: Viewer structure:", {
-    hasScene: !!(viewer.value && (viewer.value as any).scene),
-    hasRenderer: !!(
-      viewer.value && (viewer.value as any).renderHandler?.renderer
-    ),
-    viewerKeys: viewer.value ? Object.keys(viewer.value) : [],
-    sceneType:
-      viewer.value && (viewer.value as any).scene
-        ? (viewer.value as any).scene.constructor.name
-        : "none",
-  });
-
-  console.log(`Applying background color: ${color}`);
-
-  // 1. Try applying color to the container directly (from example)
-  if (viewerContainer.value) {
-    viewerContainer.value.style.backgroundColor = color;
-    console.log("Applied background color to container:", color);
-  }
-
-  // 2. If viewer exists, also try to apply color to the scene (when available)
-  if (viewer.value) {
-    try {
-      // Validate color before attempting to use it
-      if (!isValidColor(color)) {
-        console.warn(`Skipping invalid background color: ${color}`);
-        return;
-      }
-
-      // Get container using the viewer's method (from example)
-      try {
-        if (typeof viewer.value.getContainer === "function") {
-          const container = viewer.value.getContainer();
-          if (container) {
-            container.style.backgroundColor = color;
-            console.log(
-              "Applied background color via viewer's container:",
-              color
-            );
-          }
-        }
-      } catch (err) {
-        console.warn("Error setting container via viewer:", err);
-      }
-
-      // Still try the traditional THREE.js way when scene and renderer are available
-      const renderHandler = (viewer.value as any).renderHandler;
-      const scene = (viewer.value as any).scene;
-
-      if (renderHandler?.renderer && scene) {
-        // Create a THREE.js color
-        const threeColor = new THREE.Color(color);
-        renderHandler.renderer.setClearColor(threeColor, 1.0);
-        console.log("Set renderer clear color to:", color);
-
-        scene.background = threeColor.clone();
-        console.log("Set scene background to:", color);
-
-        // Force render if we have all required components
-        if (await isViewerReady()) {
-          setTimeout(() => forceRender(), 10);
-          console.log("Forced render after background color update");
-        }
-      } else {
-        console.log(
-          "Using container background only, scene/renderer not available"
-        );
-      }
-    } catch (err) {
-      console.error("Error in scene/renderer color update:", err);
-      // Container style should still be applied
-    }
-  }
-};
-
-// Add helper functions for background color updates and rendering
-const isViewerReady = async () => {
-  if (!viewer.value) return false;
-
-  // Wait for any pending initialization to complete
-  if (!viewerInitialized.value) {
-    // If viewer exists but not marked as initialized, wait a bit
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    if (!viewerInitialized.value) return false;
-  }
-
-  // Check if all necessary components are available
-  const hasScene = !!(viewer.value && (viewer.value as any).scene);
-  const hasRenderer = !!(
-    viewer.value && (viewer.value as any).renderHandler?.renderer
-  );
-  const hasCamera = !!(
-    viewer.value && (viewer.value as any).cameraHandler?.activeCam
-  );
-
-  return hasScene && hasRenderer && hasCamera;
-};
-
-// Make the forceRender function more defensive
-const forceRender = () => {
-  if (!viewer.value) return;
-
-  // Check if viewer is ready before attempting to render
-  if (!isViewerReady()) {
-    console.warn("Missing renderer, scene or camera. Cannot force render.");
-    return;
-  }
+// Simplified background color update function
+const updateViewerBackgroundColor = (color: string) => {
+  if (!viewer.value || !isValidColor(color)) return;
 
   try {
-    const renderHandler = (viewer.value as any).renderHandler;
-    const scene = (viewer.value as any).scene;
-    const camera = (viewer.value as any).cameraHandler?.activeCam;
+    // Try to apply the color to the renderer
+    const renderer = viewer.value.getRenderer?.();
+    if (renderer?.renderer) {
+      const threeColor = new THREE.Color(color);
+      renderer.renderer.setClearColor(threeColor, 1.0);
 
-    renderHandler.renderer.render(scene, camera);
+      // Try to set scene background if available
+      if ((viewer.value as any).scene) {
+        (viewer.value as any).scene.background = threeColor.clone();
+      }
+
+      // Force a render
+      viewer.value.requestRender();
+    }
   } catch (err) {
-    console.error("Error during force render:", err);
+    console.warn("Error updating background color:", err);
   }
 };
 
-// Modify the loadModels function to ensure color is applied right after loading
+// Simplified model loading function
 const loadModels = async () => {
-  console.log("loadModels called");
-
-  if (!props.selectedProject) {
-    console.error("Cannot load models: Project not available");
-    return;
-  }
-
-  if (!viewer.value) {
-    console.log("Viewer not initialized, initializing now");
-    const viewerInstance = await initializeViewer();
-    if (!viewerInstance) {
-      console.error("Failed to initialize viewer");
-      errorMessage.value = "Failed to initialize viewer";
-      return;
-    }
-  }
-
-  let successfulLoads = new Set(); // Track unique models that loaded successfully
-  const attemptedUrls = new Set(); // Track URLs that have been attempted to avoid duplicates
-  loadingModelIds.value = new Set(); // Reset the loading model IDs
+  if (!props.selectedProject || !viewer.value) return;
 
   try {
-    isLoadingModel.value = true;
-    errorMessage.value = null;
+    // Set loading state
+    viewerState.loading = true;
+    viewerState.error = null;
 
-    // Clear existing objects using the proper API method
-    if (viewer.value) {
-      console.log("Clearing existing objects before loading new ones");
-      try {
-        await viewer.value.unloadAll();
-        console.log("Scene cleared successfully");
+    // Clear current scene
+    await viewer.value.unloadAll();
 
-        // Apply container background color immediately
-        if (viewerContainer.value) {
-          viewerContainer.value.style.backgroundColor =
-            props.viewerBackgroundColor;
-          console.log(
-            "Applied container background during model load:",
-            props.viewerBackgroundColor
-          );
-        }
-      } catch (resetError) {
-        console.error("Error clearing scene:", resetError);
-      }
+    // Apply background color immediately
+    if (viewerContainer.value) {
+      viewerContainer.value.style.backgroundColor = props.viewerBackgroundColor;
     }
 
     // Get the models for the selected design option
+    const optionName = props.selectedDesignOption;
     const modelsToLoad =
-      props.selectedDesignOption === "Both"
+      optionName === "Both"
         ? [...props.designOptions.Option1, ...props.designOptions.Option2]
-        : props.designOptions[
-            props.selectedDesignOption as keyof typeof props.designOptions
-          ] || [];
-
-    console.log(
-      `Loading ${modelsToLoad.length} models for option: ${props.selectedDesignOption}`
-    );
+        : props.designOptions[optionName as keyof typeof props.designOptions] ||
+          [];
 
     if (modelsToLoad.length === 0) {
-      console.log("No models to load");
-      errorMessage.value =
-        "No models selected. Please select a model from the project details.";
+      viewerState.error = "No models selected for this option";
       return;
     }
 
     const token = store.speckle?.token || "";
     const serverUrl = "https://app.speckle.systems";
-    let loadedObjectsCount = 0;
+    let successCount = 0;
 
-    // Load each model using UrlHelper and SpeckleLoader
+    // Track already processed models to avoid duplicates
+    const processedModelIds = new Set<string>();
+
+    // Process models sequentially instead of all at once
     for (const model of modelsToLoad) {
-      if (!model || !model.id) {
-        console.warn("Skipping model due to missing ID");
-        continue;
-      }
+      if (!model?.id || processedModelIds.has(model.id)) continue;
 
+      processedModelIds.add(model.id);
       const modelId = model.id;
       const projectId = props.selectedProject.id;
 
-      // Skip if we're already loading this model
-      if (loadingModelIds.value.has(modelId)) {
-        console.log(`Model ${modelId} is already being loaded, skipping`);
-        continue;
-      }
-
-      // Mark this model as being loaded
-      loadingModelIds.value.add(modelId);
-
-      console.log(`Loading model: ${modelId} from project: ${projectId}`);
-
       try {
-        const modelUrl = `${serverUrl}/projects/${projectId}/models/${modelId}`;
-        const urls = await UrlHelper.getResourceUrls(modelUrl).catch((err) => {
-          console.error(
-            `Error getting resource URLs for model ${modelId}:`,
-            err
-          );
-          return [];
-        });
+        // Try using direct object URL first for simplicity
+        const directObjectUrl = `${serverUrl}/streams/${projectId}/objects/${modelId}`;
 
-        if (!urls || urls.length === 0) {
-          console.warn(`No resource URLs found for model: ${modelId}`);
-          const directObjectUrl = `${serverUrl}/streams/${projectId}/objects/${modelId}`;
-          console.log(`Trying direct object URL: ${directObjectUrl}`);
+        // Create loader
+        const loader = new SpeckleLoader(
+          viewer.value.getWorldTree(),
+          directObjectUrl,
+          token
+        );
 
-          if (viewer.value && viewer.value.getWorldTree) {
-            try {
-              const loader = new SpeckleLoader(
-                viewer.value.getWorldTree(),
-                directObjectUrl,
-                token
-              );
+        // Load the object with a timeout
+        await Promise.race([
+          viewer.value.loadObject(loader, true),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Loading timeout")), 30000)
+          ),
+        ]);
 
-              try {
-                if (loader && typeof loader.removeListener === "function") {
-                  loader.removeListener("load-progress", () => {});
-                }
-              } catch (listenerErr) {
-                console.warn(
-                  "Could not remove listeners, continuing anyway:",
-                  listenerErr
-                );
-              }
+        successCount++;
+      } catch (err) {
+        console.warn(`Failed to load model ${modelId}:`, err);
 
-              console.log("Loading with direct object URL");
-              await viewer.value.loadObject(loader, true);
-              console.log(`Successfully loaded direct object: ${modelId}`);
-              successfulLoads.add(modelId);
-              loadedObjectsCount++;
-            } catch (directErr) {
-              console.error(
-                `Failed to load model with direct URL: ${directErr}`
-              );
-            }
-          }
-          continue;
-        }
+        // Try alternative loading with UrlHelper as fallback
+        try {
+          const modelUrl = `${serverUrl}/projects/${projectId}/models/${modelId}`;
+          const urls = await UrlHelper.getResourceUrls(modelUrl);
 
-        let modelLoaded = false;
-        const urlsToTry = urls.slice(0, 2);
-
-        for (const url of urlsToTry) {
-          if (attemptedUrls.has(url)) {
-            console.log(`Skipping already attempted URL: ${url}`);
-            continue;
-          }
-
-          attemptedUrls.add(url);
-
-          if (!viewer.value || !viewer.value.getWorldTree) {
-            console.error("Viewer or WorldTree not available");
-            continue;
-          }
-
-          try {
+          if (urls && urls.length > 0) {
             const loader = new SpeckleLoader(
               viewer.value.getWorldTree(),
-              url,
+              urls[0],
               token
             );
 
-            if (!loader) {
-              console.error("Failed to create loader for URL:", url);
-              continue;
-            }
+            await Promise.race([
+              viewer.value.loadObject(loader, true),
+              new Promise((_, reject) =>
+                setTimeout(() => reject(new Error("Loading timeout")), 30000)
+              ),
+            ]);
 
-            try {
-              if (loader && typeof loader.removeListener === "function") {
-                loader.removeListener("load-progress", () => {});
-              }
-            } catch (listenerErr) {
-              console.warn(
-                "Could not remove listeners, continuing anyway:",
-                listenerErr
-              );
-            }
-
-            console.log(`Loading object from URL: ${url}`);
-
-            let loadTimedOut = false;
-            const timeoutId = setTimeout(() => {
-              loadTimedOut = true;
-              console.warn(`Load timeout for URL: ${url}`);
-            }, 30000);
-
-            try {
-              await Promise.race([
-                viewer.value.loadObject(loader, true),
-                new Promise((_, reject) =>
-                  setTimeout(
-                    () => reject(new Error("Operation timed out")),
-                    30000
-                  )
-                ),
-              ]);
-
-              clearTimeout(timeoutId);
-
-              if (!loadTimedOut) {
-                console.log(`Successfully loaded resource from URL: ${url}`);
-                successfulLoads.add(modelId);
-                loadedObjectsCount++;
-                modelLoaded = true;
-                break;
-              }
-            } catch (loadError) {
-              clearTimeout(timeoutId);
-              console.error(`Error loading from URL ${url}:`, loadError);
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, 300));
-          } catch (loadErr) {
-            console.error(`Error creating loader for URL ${url}:`, loadErr);
+            successCount++;
           }
+        } catch (fallbackErr) {
+          console.error(`Fallback loading failed for ${modelId}:`, fallbackErr);
         }
-
-        if (!modelLoaded) {
-          console.warn(`Failed to load any resources for model: ${modelId}`);
-        }
-      } catch (err) {
-        console.error(`Error loading model ${modelId}:`, err);
-      } finally {
-        loadingModelIds.value.delete(modelId);
       }
     }
 
-    if (successfulLoads.size === 0) {
-      console.warn("No objects were loaded successfully");
-      errorMessage.value =
+    if (successCount === 0) {
+      viewerState.error =
         "Failed to load any models. Please check your selection.";
-    } else {
-      console.log(
-        `Successfully loaded ${successfulLoads.size} unique models (${loadedObjectsCount} total objects)`
-      );
-      errorMessage.value = null;
-
-      await fitCameraToScene();
-      addGridHelper();
-
-      // Add a delay before initializing the object movement extension
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
-      // Make sure object movement extension is initialized after models are loaded
-      if (!objectMovementExtension.value) {
-        console.log("Initializing object movement extension after model load");
-        initObjectMovementExtension();
-      }
-
-      // Enable object movement by default
-      isObjectMovementEnabled.value = true;
-      if (objectMovementExtension.value) {
-        objectMovementExtension.value.enableTransformControls(true);
-        forceRender();
-      }
-
-      // Re-apply background color after loading models - both container and scene
-      updateViewerBackgroundColor(props.viewerBackgroundColor);
+      return;
     }
+
+    // Configure the scene after loading
+    await fitCameraToScene();
+    addGridHelper();
+
+    // Initialize object movement right after loading
+    console.log("Models loaded, initializing object movement...");
+    const ext = initObjectMovementExtension();
+
+    // Always enable object movement by default
+    isObjectMovementEnabled.value = true;
+
+    // Force a render to make sure everything is displayed properly
+    if (viewer.value) {
+      viewer.value.requestRender();
+    }
+
+    // Reapply background color
+    updateViewerBackgroundColor(props.viewerBackgroundColor);
   } catch (err) {
     console.error("Error in loadModels:", err);
-    errorMessage.value = "Failed to load models. Please try again.";
+    viewerState.error = "Failed to load models. Please try again.";
   } finally {
-    isLoadingModel.value = false;
-    loadingModelIds.value.clear();
+    viewerState.loading = false;
   }
 };
 
-// Modify the initializeViewer function to add our extended selection
+// Initialize the viewer with simplified approach
 const initializeViewer = async () => {
   if (!viewerContainer.value) {
-    console.log("Viewer container not available");
+    console.warn("Viewer container not available");
     return null;
   }
 
-  if (viewerInitialized.value && viewer.value) {
-    console.log("Viewer already initialized, returning existing instance");
-    return viewer.value;
-  }
-
-  console.log("Initializing viewer...");
-  errorMessage.value = null;
-
   try {
-    await disposeViewer();
-    await nextTick();
+    console.log("Initializing viewer...");
+    viewerState.error = null;
 
     // Clear container of any leftover elements
     while (viewerContainer.value.firstChild) {
       viewerContainer.value.removeChild(viewerContainer.value.firstChild);
     }
 
-    // Configure viewer parameters with explicit background color
+    // Configure viewer parameters
     const viewerParams = {
       ...DefaultViewerParams,
-      verbose: true,
-      showStats: true,
+      verbose: false, // Reduce console output
+      showStats: false, // Hide stats for better performance
       renderer: {
         antialias: true,
-        alpha: false, // Set to false for solid background
+        alpha: false,
       },
     };
 
     // Set container background color immediately
-    if (viewerContainer.value) {
-      viewerContainer.value.style.backgroundColor = props.viewerBackgroundColor;
-      console.log(
-        "Set initial container background:",
-        props.viewerBackgroundColor
-      );
-    }
+    viewerContainer.value.style.backgroundColor = props.viewerBackgroundColor;
 
     // Create and initialize viewer
-    console.log(
-      "Creating new viewer instance with background color:",
-      props.viewerBackgroundColor
-    );
     const viewerInstance = new Viewer(viewerContainer.value, viewerParams);
+    viewerInstance.createExtension(ExtendedSelection);
+
     await viewerInstance.init();
     viewer.value = markRaw(viewerInstance);
 
-    // Set initial background color using our custom function right after init
-    console.log("Setting initial background color");
-    updateViewerBackgroundColor(props.viewerBackgroundColor);
-
-    // Check if canvas was created
+    // Ensure canvas has correct style
     const canvas = viewerContainer.value.querySelector("canvas");
-    if (!canvas) {
-      console.error("Canvas was not created during initialization");
-      throw new Error("Canvas element not found after viewer init");
+    if (canvas) {
+      canvas.style.position = "absolute";
+      canvas.style.top = "0";
+      canvas.style.left = "0";
+      canvas.style.width = "100%";
+      canvas.style.height = "100%";
+      canvas.style.zIndex = "2";
+      canvas.style.display = "block";
+      debugInfo.value = `Created: ${canvas.width}x${canvas.height}`;
     }
 
-    // Ensure canvas has correct style and z-index
-    canvas.style.position = "absolute";
-    canvas.style.top = "0";
-    canvas.style.left = "0";
-    canvas.style.width = "100%";
-    canvas.style.height = "100%";
-    canvas.style.zIndex = "2";
-    canvas.style.display = "block";
+    // Add essential extension
+    viewerInstance.createExtension(CameraController);
 
-    debugInfo.value = `Created: ${canvas.width}x${canvas.height}`;
-
-    // Add essential extensions
-    viewer.value.createExtension(CameraController);
-
-    // Initialize our extended selection extension with object movement capabilities
-    initObjectMovementExtension();
-
-    // Add a resize handler to ensure viewer stays properly sized
+    // Add resize observer
     const resizeObserver = new ResizeObserver(() => {
       if (viewer.value && viewerContainer.value) {
         try {
-          console.log("Container resized, updating viewer");
           viewer.value.resize();
-
-          // Force render to update after resize
-          if (
-            (viewer.value as any).renderHandler?.renderer &&
-            (viewer.value as any).scene &&
-            (viewer.value as any).cameraHandler?.activeCam
-          ) {
-            (viewer.value as any).renderHandler.renderer.render(
-              (viewer.value as any).scene,
-              (viewer.value as any).cameraHandler.activeCam
-            );
-          }
+          viewer.value.requestRender();
         } catch (e) {
           console.warn("Error during resize:", e);
         }
@@ -1052,117 +917,75 @@ const initializeViewer = async () => {
     });
 
     resizeObserver.observe(viewerContainer.value);
+    (viewer.value as any).userData = { resizeObserver };
 
-    // Store the observer reference to disconnect it later
-    (viewer.value as any).userData = {
-      ...(viewer.value as any).userData,
-      resizeObserver,
-    };
+    viewerState.initialized = true;
+    viewerState.needsReset = false;
 
-    viewerInitialized.value = true;
-    forceResetNeeded.value = false;
-    console.log("Viewer initialized successfully");
-
-    // Force initial resize and render
-    if (viewerContainer.value) {
-      viewer.value.resize();
-      forceRender();
-    }
+    // Apply color and force resize
+    updateViewerBackgroundColor(props.viewerBackgroundColor);
+    viewerInstance.resize();
+    viewerInstance.requestRender();
 
     return viewer.value;
   } catch (error) {
     console.error("Error initializing Speckle Viewer:", error);
-    errorMessage.value =
-      "Failed to initialize 3D viewer. Please try refreshing the page.";
-    viewerInitialized.value = false;
+    viewerState.error = "Failed to initialize viewer";
+    viewerState.initialized = false;
     return null;
   }
 };
 
+// Simplified camera fit function
 const fitCameraToScene = async () => {
   if (!viewer.value) return;
-
-  console.log("Attempting to fit camera to scene");
-
-  await new Promise((resolve) => setTimeout(resolve, 500));
 
   try {
     const cameraController = viewer.value.getExtension(CameraController);
     if (cameraController) {
-      // Use zoomExtents instead of fitToScene for proper camera fitting
       (cameraController as any).zoomExtents();
-      console.log("Initial camera fit completed");
-    } else {
-      console.warn("CameraController extension not available");
     }
-  } catch (e) {
-    console.warn("Initial camera fit failed:", e);
-  }
 
-  const retryDelays = [100, 500, 1000, 2000];
-
-  for (const delay of retryDelays) {
-    await new Promise((resolve) => setTimeout(resolve, delay));
-
-    try {
-      console.log(`Retrying camera fit after ${delay}ms`);
-      const cameraController = viewer.value.getExtension(CameraController);
-      if (cameraController) {
-        (cameraController as any).zoomExtents();
-
-        if (delay > 500) {
-          // Access the camera through the proper API
-          const camera = (viewer.value as any).cameraHandler?.activeCam;
-          if (camera && camera.position) {
-            console.log("Adjusting camera position for better visibility");
-            camera.position.multiplyScalar(1.2);
-            camera.updateProjectionMatrix();
-
-            // Instead of direct renderer access, use our helper function
-            forceRender();
-
-            // Re-apply background color
-            updateViewerBackgroundColor(props.viewerBackgroundColor);
-          }
+    // Add a delayed second attempt for better positioning
+    setTimeout(() => {
+      if (viewer.value) {
+        const cameraController = viewer.value.getExtension(CameraController);
+        if (cameraController) {
+          (cameraController as any).zoomExtents();
+          viewer.value.requestRender();
         }
       }
-    } catch (e) {
-      console.warn("Error during camera fit retry:", e);
-    }
+    }, 1000);
+  } catch (e) {
+    console.warn("Error during camera fit:", e);
   }
 };
 
+// Add grid helper for orientation
 const addGridHelper = () => {
   if (!viewer.value) return;
 
   try {
-    // Get the scene from the viewer using type assertion
     const scene = (viewer.value as any).scene;
-    if (!scene) {
-      console.warn("Scene not available in viewer");
-      return;
-    }
+    if (!scene) return;
 
     const existingGrid = scene.children.find(
       (child: THREE.Object3D) => child.name === "gridHelper"
     );
-    if (existingGrid) {
-      scene.remove(existingGrid);
-    }
+    if (existingGrid) scene.remove(existingGrid);
 
     const gridHelper = new THREE.GridHelper(100, 100, 0x888888, 0xcccccc);
     gridHelper.name = "gridHelper";
     gridHelper.position.y = -0.01;
     scene.add(gridHelper);
-
-    console.log("Added grid helper for orientation");
   } catch (e) {
     console.warn("Failed to add grid helper:", e);
   }
 };
 
+// Set map position
 const setMapPosition = (lat: number, lng: number) => {
-  if (googleMap.value && googleMap.value.map) {
+  if (googleMap.value?.map) {
     try {
       googleMap.value.map.setCenter({ lat, lng });
     } catch (error) {
@@ -1171,133 +994,78 @@ const setMapPosition = (lat: number, lng: number) => {
   }
 };
 
-// Add this function and expose it
-const debugViewerStructure = () => {
-  if (!viewer.value) {
-    console.log("DEBUG: No viewer instance available");
-    return;
-  }
-
-  console.log("DEBUG: Viewer structure:", {
-    viewerKeys: Object.keys(viewer.value),
-    hasScene: !!(viewer.value && (viewer.value as any).scene),
-    hasRenderer: !!(
-      viewer.value && (viewer.value as any).renderHandler?.renderer
-    ),
-    rendererType:
-      viewer.value && (viewer.value as any).renderHandler?.renderer
-        ? (viewer.value as any).renderHandler.renderer.constructor.name
-        : "none",
-    sceneType:
-      viewer.value && (viewer.value as any).scene
-        ? (viewer.value as any).scene.constructor.name
-        : "none",
-  });
-
-  // Try to print specific properties
-  if ((viewer.value as any).scene) {
-    console.log("Scene background:", (viewer.value as any).scene.background);
-  }
-
-  if ((viewer.value as any).renderHandler?.renderer) {
-    console.log("Renderer:", (viewer.value as any).renderHandler.renderer);
-  }
-};
-
 // Toggle object movement mode
 const toggleObjectMovement = () => {
   isObjectMovementEnabled.value = !isObjectMovementEnabled.value;
 
-  if (!viewer.value || !objectMovementExtension.value) {
-    console.warn("Viewer or movement extension not initialized");
-    return;
+  if (objectMovementExtension.value) {
+    objectMovementExtension.value.enableTransformControls(
+      isObjectMovementEnabled.value
+    );
+
+    // Force a selection update to refresh gizmo state
+    if (isObjectMovementEnabled.value && viewer.value) {
+      if (viewer.value && viewer.value.getExtension) {
+        const selectionExtension = viewer.value.getExtension(ExtendedSelection);
+        const selectedIds = Object.keys(
+          objectMovementExtension.value?.selectionRvs || {}
+        );
+        selectionExtension.selectObjects(selectedIds, true);
+      }
+    }
   }
 
-  objectMovementExtension.value.enableTransformControls(
-    isObjectMovementEnabled.value
-  );
-  console.log(
-    `Object movement ${isObjectMovementEnabled.value ? "enabled" : "disabled"}`
-  );
-  console.log(
-    `Object movement is now ${
-      isObjectMovementEnabled.value ? "enabled" : "disabled"
-    }`
-  );
-
-  // Force a render update to show/hide the controls
   if (viewer.value) {
     viewer.value.requestRender();
   }
 };
 
-// Initialize the ExtendedSelection extension
+// Initialize object movement extension with more debugging
 const initObjectMovementExtension = () => {
-  if (!viewer.value) {
-    console.warn("Cannot initialize object movement without viewer");
-    return null;
-  }
+  if (!viewer.value || !viewerState.initialized) return null;
 
   try {
-    // Create the base SelectionExtension first if it doesn't exist
-    let baseSelection = viewer.value.getExtension(SelectionExtension);
-    if (!baseSelection) {
-      console.log("Creating base SelectionExtension first");
-      baseSelection = viewer.value.createExtension(SelectionExtension);
+    console.log("Initializing object movement extension...");
 
-      // Give it a moment to initialize
+    // First check if the extension already exists
+    let extension = viewer.value.getExtension(ExtendedSelection);
+
+    // If not, create it
+    if (!extension) {
+      extension = viewer.value.createExtension(ExtendedSelection);
+    }
+
+    console.log("Extension created:", extension);
+
+    if (extension) {
+      objectMovementExtension.value = extension;
+
+      // Register a direct listener to handle object selection events
+      viewer.value.on(ViewerEvent.ObjectClicked, (event) => {
+        console.log("Selection event received:", event);
+        if (extension && isObjectMovementEnabled.value) {
+          // Force update the gizmo after a short delay to ensure proper positioning
+          setTimeout(() => {
+            extension.enableTransformControls(true);
+            viewer.value?.requestRender();
+          }, 100);
+        }
+      });
+
+      // Enable by default right away
+      extension.enableTransformControls(isObjectMovementEnabled.value);
+      extension.setMode(currentTransformMode.value);
       viewer.value.requestRender();
     }
 
-    // Make sure it's there before proceeding
-    if (!viewer.value.getExtension(SelectionExtension)) {
-      console.error("Failed to create base SelectionExtension");
-      return null;
-    }
-
-    // Now remove it to replace with our extended version
-    if (baseSelection && typeof baseSelection.dispose === "function") {
-      baseSelection.dispose();
-    }
-
-    // Create and initialize extended selection extension
-    console.log("Initializing object movement extension...");
-    const extension = viewer.value.createExtension(ExtendedSelection);
-    if (!extension) {
-      console.error("Failed to create ExtendedSelection extension");
-      return null;
-    }
-
-    objectMovementExtension.value = extension;
-
-    // Initially set the transform controls to the current state
-    setTimeout(() => {
-      if (extension) {
-        extension.enableTransformControls(isObjectMovementEnabled.value);
-        if (isObjectMovementEnabled.value) {
-          extension.setMode(currentTransformMode.value);
-        }
-        // Force a render to make sure everything is visible
-        viewer.value?.requestRender();
-      }
-    }, 500);
-
-    console.log("Object movement extension initialized successfully");
     return extension;
   } catch (err) {
-    console.error("Error initializing object movement extension:", err);
-    // If there's an error, try to create at least the base selection extension
-    try {
-      console.log("Falling back to standard SelectionExtension");
-      viewer.value.createExtension(SelectionExtension);
-    } catch (fallbackErr) {
-      console.error("Fallback also failed:", fallbackErr);
-    }
+    console.error("Error initializing movement extension:", err);
     return null;
   }
 };
 
-// Add a method to set the transform mode
+// Set transform mode
 const setTransformMode = (mode: "translate" | "rotate" | "scale") => {
   currentTransformMode.value = mode;
   if (objectMovementExtension.value) {
@@ -1305,7 +1073,7 @@ const setTransformMode = (mode: "translate" | "rotate" | "scale") => {
   }
 };
 
-// Add this to your defineExpose
+// Export public methods
 defineExpose({
   initializeViewer,
   loadModels,
@@ -1313,11 +1081,9 @@ defineExpose({
   disposeViewer,
   reinitializeViewer,
   updateViewerBackgroundColor,
-  debugViewerStructure,
-  isViewerReady,
   toggleObjectMovement,
-  setTransformMode, // Add this method
-  currentTransformMode, // Expose the current mode
+  setTransformMode,
+  currentTransformMode,
 });
 </script>
 
@@ -1326,7 +1092,7 @@ defineExpose({
   isolation: isolate;
   position: relative;
   min-height: 400px;
-  display: block; /* Force block display */
+  display: block;
   overflow: visible;
 }
 

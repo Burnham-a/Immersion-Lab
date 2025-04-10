@@ -10,39 +10,64 @@ defineProps({
 <template>
   <div class="greetings">
     <h1 class="green">{{ msg }}</h1>
-    <h3>The next evolution of your design</h3>
-    <h3>
-      <router-link
-        to="/StaffClient"
-        class="inline-block bg-grey-500 text-white font-bold py-2 px-4 rounded-full shadow-lg transform transition-transform hover:scale-105 hover:shadow-xl"
-      >
-        Immersion Lab App
-      </router-link>
-    </h3>
+    <h3 class="subtitle">The next evolution of your design</h3>
   </div>
 </template>
 
 <style scoped>
 h1 {
-  font-weight: 500;
-  font-size: 2.6rem;
+  font-weight: 700;
+  font-size: 2.5rem; /* Reduced size */
   position: relative;
-  top: -10px;
+  margin-bottom: 0.5rem;
+  background: linear-gradient(
+    45deg,
+    #ff9900,
+    #ff6600
+  ); /* Changed to orange gradient */
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 h3 {
-  font-size: 1.2rem;
+  font-size: 1.2rem; /* Reduced size */
+  color: var(--title-color); /* Use theme-based color for contrast */
+  font-weight: 400;
+  margin-top: 0.5rem;
 }
 
-.greetings h1,
-.greetings h3 {
-  text-align: center;
+.subtitle {
+  opacity: 0.8;
+  color: var(--title-color); /* Corrected to use title color for subtitle */
+}
+
+.greetings {
+  padding: 1.5rem 1rem; /* Adjusted padding */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center; /* Ensures proper centering */
 }
 
 @media (min-width: 1024px) {
-  .greetings h1,
-  .greetings h3 {
-    text-align: center;
+  h1 {
+    font-size: 3rem; /* Slightly smaller for large screens */
   }
+
+  h3 {
+    font-size: 1.4rem; /* Slightly smaller for large screens */
+  }
+}
+
+:root {
+  --title-color: #000000; /* Default light theme title color */
+  --title-color-contrast: #ffffff; /* Default light theme subtitle contrast */
+}
+
+[data-theme="dark"] {
+  --title-color: #ffffff; /* Dark theme title color */
+  --title-color-contrast: #ffffff; /* Corrected to use contrast color for light text */
 }
 </style>
