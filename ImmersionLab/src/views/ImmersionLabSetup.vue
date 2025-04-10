@@ -211,27 +211,8 @@ const handleAuthClick = async () => {
     isAuthenticating.value = true;
     authError.value = undefined;
 
-    // Call the authenticate method with better error handling
-    const authResult = await store.authenticate().catch((error) => {
-      console.error("Auth method exception:", error);
-      // Return null to indicate authentication failure but don't throw
-      // to allow the login flow to continue
-      return null;
-    });
-
-    // Check if authentication was successful
-    if (store.isAuthenticated && store.speckle.token) {
-      console.log("Authentication successful, fetching projects...");
-      await fetchProjects();
-    } else {
-      console.log("Authentication in progress or redirected to login page");
-      // Don't show an error since the user might just be going through the auth flow
-      // We'll only show an error if there was an actual exception
-      if (!authResult && !store.speckle.token) {
-        authError.value =
-          "Authentication process started. Please complete the login in the opened window.";
-      }
-    }
+    // Attempt authentication with auto-retry
+    await attemptAuthentication(false);
   } catch (error) {
     console.error("Authentication error:", error);
     authError.value =
@@ -243,8 +224,101 @@ const handleAuthClick = async () => {
   }
 };
 
-const clearAuthError = () => {
+// New function to attempt authentication with auto-retry
+const attemptAuthentication = async (isRetry = false) => {
+  console.log(`${isRetry ? "Retrying" : "Starting"} authentication process...`);
+
+  // Call the authenticate method with better error handling
+  const authResult = await store.authenticate().catch((error) => {
+    console.error("Auth method exception:", error);
+    return null;
+  });
+
+  // If we have a token immediately, proceed with fetching projects
+  if (store.isAuthenticated && store.speckle.token) {
+    console.log("Authentication successful, fetching projects...");
+    await fetchProjects();
+    return true;
+  } else {
+    // Start polling for when authentication completes
+    console.log("Authentication initiated, waiting for completion...");
+    try {
+      await pollForAuthentication();
+      return true;
+    } catch (error) {
+      console.log("Polling failed:", error);
+
+      // Auto-retry once if this wasn't already a retry
+      if (!isRetry) {
+        console.log("Auto-retrying authentication...");
+        // Slight delay before retry
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        return attemptAuthentication(true);
+      }
+      throw error;
+    }
+  }
+};
+
+// Improved polling function for authentication completion
+const pollForAuthentication = async () => {
+  const maxAttempts = 2; // Reduce polling time to 15 seconds
+  let attempts = 0;
+
+  return new Promise<void>((resolve, reject) => {
+    const checkAuth = async () => {
+      attempts++;
+
+      console.log(`Polling for auth (attempt ${attempts}/${maxAttempts})...`);
+
+      // Try to refresh auth status from store
+      try {
+        await store.checkAuthStatus();
+      } catch (e) {
+        console.warn("Error checking auth status:", e);
+      }
+
+      // Check if we're authenticated now
+      if (store.isAuthenticated && store.speckle.token) {
+        console.log("Authentication detected via polling!");
+        await fetchProjects();
+        resolve();
+        return;
+      }
+
+      // Check if we've exceeded max attempts
+      if (attempts >= maxAttempts) {
+        console.log("Authentication polling timed out");
+        reject(new Error("Authentication polling timed out"));
+        return;
+      }
+
+      // Continue polling with increasing delay
+      const delay = Math.min(1000 + attempts * 200, 3000);
+      setTimeout(checkAuth, delay);
+    };
+
+    // Start polling
+    checkAuth();
+  });
+};
+
+// Update the clearAuthError function to automatically retry authentication
+const clearAuthError = async () => {
   authError.value = undefined;
+  // Automatically retry authentication when "Try Again" is clicked
+  try {
+    isAuthenticating.value = true;
+    await attemptAuthentication(false);
+  } catch (error) {
+    console.error("Authentication retry error:", error);
+    authError.value =
+      error instanceof Error
+        ? `Authentication failed: ${error.message}`
+        : "Authentication failed. Please try again.";
+  } finally {
+    isAuthenticating.value = false;
+  }
 };
 
 // Fix the logout handler to match the original implementation
@@ -519,6 +593,26 @@ onMounted(async () => {
     }
   } else {
     console.log("Not authenticated yet, waiting for user login");
+
+    // Check if we're in the process of returning from authentication
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has("auth") || urlParams.has("access_token")) {
+      console.log(
+        "Detected auth parameters in URL, attempting to complete authentication"
+      );
+      isAuthenticating.value = true;
+      try {
+        await store.checkAuthStatus();
+        if (store.isAuthenticated && store.speckle.token) {
+          console.log("Authentication completed from URL parameters");
+          await fetchProjects();
+        }
+      } catch (error) {
+        console.error("Error completing authentication from URL:", error);
+      } finally {
+        isAuthenticating.value = false;
+      }
+    }
   }
 });
 
