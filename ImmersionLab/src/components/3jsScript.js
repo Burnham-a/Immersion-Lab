@@ -30,6 +30,26 @@ export default function initializeScene(canvas) {
     shadowBias: -0.00086,
   };
 
+  // Create loading indicator
+  const loadingElem = document.createElement("div");
+  loadingElem.style.position = "absolute";
+  loadingElem.style.top = "50%";
+  loadingElem.style.left = "50%";
+  loadingElem.style.transform = "translate(-50%, -50%)";
+  loadingElem.style.background = "rgba(0,0,0,0.7)";
+  loadingElem.style.color = "white";
+  loadingElem.style.padding = "20px 30px";
+  loadingElem.style.borderRadius = "10px";
+  loadingElem.style.fontFamily = "Arial, sans-serif";
+  loadingElem.style.zIndex = "1000";
+  loadingElem.textContent = "Loading model...";
+
+  // Add loading element to canvas parent
+  if (canvas.parentNode) {
+    canvas.parentNode.style.position = "relative";
+    canvas.parentNode.appendChild(loadingElem);
+  }
+
   const dracoLoader = new DRACOLoader();
   // Use CDN path for DRACO decoder for better compatibility
   dracoLoader.setDecoderPath(
@@ -50,6 +70,12 @@ export default function initializeScene(canvas) {
     (gltf) => {
       model = gltf.scene;
       console.log("Model loaded successfully!");
+
+      // Remove loading indicator when model is loaded
+      if (loadingElem.parentNode) {
+        loadingElem.parentNode.removeChild(loadingElem);
+      }
+
       scene.add(model);
 
       // Setup model materials and controls
@@ -57,10 +83,14 @@ export default function initializeScene(canvas) {
     },
     (progress) => {
       if (progress.total > 0) {
-        console.log(
-          `Loading model: ${(progress.loaded / progress.total) * 100}% loaded`
-        );
+        // Update loading indicator with progress percentage
+        const percent = Math.round((progress.loaded / progress.total) * 100);
+        loadingElem.textContent = `Loading model: ${percent}%`;
+        console.log(`Loading model: ${percent}% loaded`);
       } else {
+        loadingElem.textContent = `Loading model: ${Math.round(
+          progress.loaded / 1000
+        )} KB loaded`;
         console.log(`Loading model: ${progress.loaded} bytes loaded`);
       }
     },

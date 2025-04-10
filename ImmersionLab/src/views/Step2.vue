@@ -1,19 +1,31 @@
 <template>
   <main>
     <h3>Step 2</h3>
-    <br />
-    Move Forward - W <br />
-    Move Backward - S <br />
-    Move Up - E <br />
-    Move Down - Q <br />
-    Move Left - A <br />
-    Move Right - D <br />
-    Orbit - Left Mouse Click <br />
-    Pan - Right Mouse Click <br />
-    Zoom - Mouse Wheel <br />
+    <div class="viewer-container">
+      <canvas ref="canvasRef"></canvas>
+    </div>
+
+    <div class="controls-info">
+      <h4>Controls:</h4>
+      <div class="controls-grid">
+        <div class="control-group">
+          <h5>Movement</h5>
+          <p>Move Forward - W</p>
+          <p>Move Backward - S</p>
+          <p>Move Left - A</p>
+          <p>Move Right - D</p>
+          <p>Move Up - E</p>
+          <p>Move Down - Q</p>
+        </div>
+        <div class="control-group">
+          <h5>Camera</h5>
+          <p>Orbit - Left Mouse Click</p>
+          <p>Pan - Right Mouse Click</p>
+          <p>Zoom - Mouse Wheel</p>
+        </div>
+      </div>
+    </div>
   </main>
-  <br />
-  <canvas ref="canvasRef" style="width: 1000px; height: auto"></canvas>
 </template>
 
 <script setup>
@@ -57,9 +69,50 @@ header {
     flex-wrap: wrap;
   }
 }
-</style>
 
-<style scoped>
+.viewer-container {
+  width: 100%;
+  margin: 1rem 0 2rem 0;
+  position: relative;
+}
+
+canvas {
+  width: 100%;
+  height: 600px;
+  display: block;
+  background-color: #f0f0f0;
+  border-radius: 8px;
+}
+
+.controls-info {
+  margin-top: 1rem;
+  padding: 1rem;
+  background-color: rgba(240, 240, 240, 0.8);
+  border-radius: 8px;
+}
+
+.controls-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+}
+
+.control-group h5 {
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  color: var(--title-color);
+}
+
+.control-group p {
+  margin: 0.3rem 0;
+  font-size: 0.9rem;
+}
+
+h4 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
 h3 {
   font-size: 1.2rem;
   font-weight: 500;
