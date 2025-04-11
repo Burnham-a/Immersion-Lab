@@ -105,7 +105,9 @@
 
     <ClientDesignSelect
       v-if="projectData"
-      :projectData="projectData"
+      :projectData="formatProjectDataForViewer(projectData)"
+      :designOptions="getDesignOptions()"
+      :selectedDesignOption="selectedDesignOption"
       @option-selected="selectDesignOption"
       class="mt-6"
     />
@@ -131,9 +133,11 @@
 
     <ClientViewer
       v-if="projectData"
-      :projectData="projectData"
+      :projectData="formatProjectDataForViewer(projectData)"
+      :designOptions="getDesignOptions()"
       :selectedDesignOption="selectedDesignOption"
       :backgroundColor="backgroundColor"
+      :speckleModels="speckleModels"
       ref="viewerRef"
       class="mt-6"
     />
@@ -141,10 +145,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from "vue";
+import { ref, onMounted, computed, watch } from "vue";
 import ClientViewer from "@/components/ClientViewer.vue";
 import ClientDesignSelect from "@/components/ClientDesignSelect.vue";
 import { useImmersionLabStore } from "@/stores/store-IL"; // Import the store
+// Fix the Speckle Viewer import
+import { Viewer } from "@speckle/viewer";
+import { convertSpeckleObjectToThreeJS } from "@/utils/SpeckleModelConverter";
 
 // Define reactive variables
 const projectNumber = ref("");
@@ -153,6 +160,9 @@ const projectData = ref(null);
 const selectedDesignOption = ref("Option1");
 const backgroundColor = ref("#ffffff");
 const viewerRef = ref(null);
+const speckleModels = ref([]);
+const isLoadingModels = ref(false);
+const modelLoadingStatus = ref("");
 
 // Access the store
 const store = useImmersionLabStore();
@@ -164,6 +174,47 @@ const formatDate = (dateString) => {
   } catch (e) {
     return "Unknown date";
   }
+};
+
+// Get design options in the correct format
+const getDesignOptions = () => {
+  if (!projectData.value) return { Option1: [], Option2: [] };
+
+  // If it's a share code decoded data
+  if (projectData.value.designOptions) {
+    return projectData.value.designOptions;
+  }
+
+  // If it's the older format or other source
+  return {
+    Option1: projectData.value.option1Models || [],
+    Option2: projectData.value.option2Models || [],
+  };
+};
+
+// Format project data for the viewer component
+const formatProjectDataForViewer = (data) => {
+  // If it's a share code decoded data, need to restructure it
+  if (data.designOptions && data.project) {
+    return {
+      name: data.project.name,
+      id: data.project.id,
+      models: {
+        items: [
+          ...data.designOptions.Option1,
+          ...data.designOptions.Option2,
+        ].filter(
+          (value, index, self) =>
+            index === self.findIndex((m) => m.id === value.id)
+        ), // Remove duplicates
+      },
+      designOptions: data.designOptions,
+      activeOption: data.activeOption || selectedDesignOption.value,
+    };
+  }
+
+  // If it's the regular project data format, return as is
+  return data;
 };
 
 // Define goToProjectViewer function
@@ -189,10 +240,27 @@ const goToProjectViewer = async () => {
         // Set the project data
         projectData.value = decodedData;
 
+        // Also save to store for other components
+        store.selectedProject = formatProjectDataForViewer(decodedData);
+        store.designOptions = decodedData.designOptions || {
+          Option1: [],
+          Option2: [],
+        };
+
         // Initialize design option from the decoded data
         if (decodedData.activeOption) {
           selectedDesignOption.value = decodedData.activeOption;
         }
+
+        // Wait for next render cycle before updating the viewer and loading models
+        setTimeout(async () => {
+          if (viewerRef.value && viewerRef.value.updateDesignOption) {
+            viewerRef.value.updateDesignOption(selectedDesignOption.value);
+          }
+
+          // Load the models for the selected option
+          await loadSpeckleModelsForOption(selectedDesignOption.value);
+        }, 100);
 
         errorMessage.value = null;
         return;
@@ -232,8 +300,112 @@ const goToProjectViewer = async () => {
 };
 
 // Update the selected design option
-const selectDesignOption = (option) => {
+const selectDesignOption = async (option) => {
+  console.log("Design option selected:", option);
   selectedDesignOption.value = option;
+
+  // Update the viewer if it has the necessary method
+  if (viewerRef.value && viewerRef.value.updateDesignOption) {
+    viewerRef.value.updateDesignOption(option);
+  }
+
+  // Load models based on the selected option
+  await loadSpeckleModelsForOption(option);
+};
+
+// Load Speckle models based on selected design option
+const loadSpeckleModelsForOption = async (option) => {
+  if (!projectData.value || !projectData.value.designOptions) {
+    console.error("No project data available");
+    return;
+  }
+
+  try {
+    isLoadingModels.value = true;
+    speckleModels.value = [];
+
+    let modelsToLoad = [];
+
+    // Determine which models to load based on the option
+    if (option === "Both") {
+      modelsToLoad = [
+        ...(projectData.value.designOptions.Option1 || []),
+        ...(projectData.value.designOptions.Option2 || []),
+      ];
+    } else {
+      modelsToLoad = projectData.value.designOptions[option] || [];
+    }
+
+    if (modelsToLoad.length === 0) {
+      console.log(`No models to load for option: ${option}`);
+      isLoadingModels.value = false;
+      return;
+    }
+
+    console.log(`Loading ${modelsToLoad.length} models for option: ${option}`);
+
+    // Load each model
+    for (const model of modelsToLoad) {
+      modelLoadingStatus.value = `Loading model: ${model.name}...`;
+
+      try {
+        // Create a container div for the Speckle viewer (not attached to DOM)
+        const container = document.createElement("div");
+
+        // Create a new Speckle viewer
+        const viewer = new Viewer({
+          container,
+          showStats: false,
+          environmentSrc: "/env-maps/env.jpg",
+        });
+
+        // Load the model from Speckle
+        // Note: In a real implementation, you would need to authenticate
+        const streamId = model.streamId || projectData.value.project?.id;
+        if (!streamId) {
+          console.warn(`No stream ID for model: ${model.name}`);
+          continue;
+        }
+
+        await viewer.loadObject(`${streamId}/objects/${model.id}`);
+
+        // Get the object from the viewer
+        const speckleObject = viewer.getObject();
+
+        // Convert to Three.js format
+        const threeJsModel = convertSpeckleObjectToThreeJS(speckleObject);
+
+        // Add metadata to the model
+        threeJsModel.userData = {
+          ...model,
+          designOption: option,
+          originalId: model.id,
+        };
+
+        // Add to our models array
+        speckleModels.value.push(threeJsModel);
+
+        console.log(`Loaded model: ${model.name}`);
+
+        // Dispose of the Speckle viewer to free memory
+        viewer.dispose();
+      } catch (modelError) {
+        console.error(`Error loading model ${model.name}:`, modelError);
+      }
+    }
+
+    modelLoadingStatus.value = `Loaded ${speckleModels.value.length} models successfully`;
+
+    // Notify the viewer to update with the new models
+    if (viewerRef.value && viewerRef.value.updateSpeckleModels) {
+      viewerRef.value.updateSpeckleModels(speckleModels.value);
+    }
+  } catch (error) {
+    console.error("Error loading Speckle models:", error);
+    modelLoadingStatus.value = `Error loading models: ${error.message}`;
+  } finally {
+    isLoadingModels.value = false;
+  }
 };
 
 // Update background color and apply to viewer
@@ -258,6 +430,17 @@ onMounted(() => {
     goToProjectViewer();
   }
 });
+
+// Watch for changes in project data to load models
+watch(
+  () => projectData.value,
+  async (newProjectData) => {
+    if (newProjectData) {
+      await loadSpeckleModelsForOption(selectedDesignOption.value);
+    }
+  },
+  { immediate: false }
+);
 </script>
 
 <style scoped>
