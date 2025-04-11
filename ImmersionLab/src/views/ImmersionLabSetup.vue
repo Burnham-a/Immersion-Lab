@@ -88,6 +88,7 @@
       <br />
       <br />
       <br />
+      <br />
       <!-- Add the Selected Models Component at the end -->
       <SelectedModelsComponent
         :design-options="designOptions"
