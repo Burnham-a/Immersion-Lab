@@ -81,18 +81,22 @@
         :design-options="designOptions"
         :viewer-background-color="viewerBackgroundColor"
       />
-
-      <!-- Project Save Component -->
-      <ProjectSaveComponent
-        ref="projectSaveComponent"
-        :selected-project="selectedProject || undefined"
+      <br />
+      <br />
+      <br />
+      <br />
+      <br />
+      <br />
+      <br />
+      <!-- Add the Selected Models Component at the end -->
+      <SelectedModelsComponent
         :design-options="designOptions"
-        :viewer-background-color="viewerBackgroundColor"
-        v-model:selected-design-option="selectedDesignOption"
-        :current-model="currentModel"
-        @update:selected-design-option="handleDesignOptionChange"
+        :selected-project="selectedProjectForViewer"
+        :selected-design-option="selectedDesignOption"
       />
+      <br />
     </div>
+
     <!-- Loading indicator -->
     <div v-if="isAuthenticating" class="mt-6">
       <p class="auth-message auth-message-info">
@@ -138,7 +142,7 @@ import ProjectSearchComponent from "@/components/ProjectSearchComponent.vue";
 import ProjectDetailsComponent from "@/components/ProjectDetailsComponent.vue";
 import DesignOptionsComponent from "@/components/DesignOptionsComponent.vue";
 import ViewerComponent from "@/components/ViewerComponent.vue";
-import ProjectSaveComponent from "@/components/ProjectSaveComponent.vue";
+import SelectedModelsComponent from "@/components/SelectedModelsComponent.vue";
 
 import { useImmersionLabStore } from "@/stores/store-IL";
 import type { StreamGridItemProps } from "@/types/StreamGridItemProps";
@@ -182,12 +186,12 @@ const viewerComponent = shallowRef<InstanceType<typeof ViewerComponent> | null>(
   null
 );
 const viewerInitialized = ref(false);
-const projectSaveComponent = ref<InstanceType<
-  typeof ProjectSaveComponent
-> | null>(null);
 const selectedModel = ref<{ name: string; id: string } | null>(null);
 const currentModel = computed(() => selectedModel.value || undefined);
 const isViewerOperationInProgress = ref(false);
+
+// Reactive array to store selected models
+const selectedModels = ref<{ name: string; id: string }[]>([]);
 
 // GraphQL Query
 const { executeQuery, data, error } = useQuery({
@@ -262,7 +266,7 @@ const attemptAuthentication = async (isRetry = false) => {
 
 // Improved polling function for authentication completion
 const pollForAuthentication = async () => {
-  const maxAttempts = 2; // Reduce polling time to 15 seconds
+  const maxAttempts = 2; // Reduce polling time to 2 seconds
   let attempts = 0;
 
   return new Promise<void>((resolve, reject) => {
@@ -467,51 +471,65 @@ const addModelToDesignOption = async (model: any, option: string) => {
     return;
   }
 
-  console.log(`Adding model to ${option}:`, model);
+  // Add more debugging
+  console.log(`ImmersionLabSetup: Adding model to ${option}:`, model);
+  console.log(
+    "Current designOptions before update:",
+    JSON.stringify(designOptions.value)
+  );
 
   try {
-    // Clone and update the design options
-    const updatedOptions = { ...designOptions.value };
+    // Create a clean model object with just the properties we need
+    const cleanModel = {
+      id: model.id,
+      name: model.name,
+    };
 
+    // Directly update the design options without cloning first
     if (option === "Option1") {
-      // Make sure the model is actually added to the array
-      updatedOptions.Option1 = [{ ...model }];
-      console.log("Updated Option1 models:", updatedOptions.Option1);
+      // Force reactivity by using array methods
+      designOptions.value.Option1 = [];
+      designOptions.value.Option1.push(cleanModel);
     } else if (option === "Option2") {
-      updatedOptions.Option2 = [{ ...model }];
-      console.log("Updated Option2 models:", updatedOptions.Option2);
+      designOptions.value.Option2 = [];
+      designOptions.value.Option2.push(cleanModel);
     }
 
-    // Update the design options with the new references
-    designOptions.value = updatedOptions;
-
-    // Set selected option
-    selectedDesignOption.value = option as "Option1" | "Option2" | "Both";
+    console.log("Updated designOptions:", JSON.stringify(designOptions.value));
 
     // Store the selected model
-    selectedModel.value = { ...model }; // Create a new object to ensure reactivity
+    selectedModel.value = cleanModel;
 
-    // After updating the model, print the full state to verify
-    console.log("Current design options state:", {
-      Option1Count: designOptions.value.Option1.length,
-      Option2Count: designOptions.value.Option2.length,
-      CurrentOption: selectedDesignOption.value,
-    });
-
-    // Ensure all DOM updates are complete before accessing the viewer
+    // Force the component to update
     await nextTick();
-    await nextTick(); // Double nextTick to ensure conditional rendering is complete
 
+    // Now select this design option
+    selectedDesignOption.value = option as "Option1" | "Option2" | "Both";
+
+    // Force another update
+    await nextTick();
+
+    // Log to verify
+    console.log(
+      "Final design options state:",
+      JSON.stringify({
+        option1Length: designOptions.value.Option1.length,
+        option2Length: designOptions.value.Option2.length,
+        option1: designOptions.value.Option1,
+        option2: designOptions.value.Option2,
+      })
+    );
+
+    // Load the models in the viewer
     setTimeout(async () => {
       await safeViewerOperation(async (viewer) => {
         if (!viewerInitialized.value) {
           await viewer.initializeViewer();
           viewerInitialized.value = true;
         }
-
         await viewer.loadModels();
       });
-    }, 150); // Slightly longer timeout to ensure DOM is ready
+    }, 150);
   } catch (err) {
     console.error("Error in addModelToDesignOption:", err);
   }
@@ -542,7 +560,7 @@ const resetBackgroundColor = () => {
 
 // Add a handler for design option changes
 const handleDesignOptionChange = (option: "Option1" | "Option2" | "Both") => {
-  console.log("Design option changed from ProjectSaveComponent:", option);
+  console.log("Design option changed:", option);
   selectedDesignOption.value = option;
 
   // If the viewer is initialized, update it to reflect the new option

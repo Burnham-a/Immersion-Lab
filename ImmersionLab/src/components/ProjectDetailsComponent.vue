@@ -94,7 +94,7 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(["add-model-to-design-option"]);
+const emit = defineEmits(["add-model-to-design-option", "model-selected"]);
 
 const isModelAssignedTo = (model: { id: string }, option: string) => {
   if (!props.designOptions[option] || !props.designOptions[option].length) {
@@ -110,7 +110,25 @@ const addModelToDesignOption = (
   model: { id: string; name: string },
   option: string
 ) => {
-  emit("add-model-to-design-option", model, option);
+  console.log(
+    "ProjectDetailsComponent: Adding model to option:",
+    option,
+    model
+  );
+  console.log(
+    "Current designOptions before emit:",
+    JSON.stringify(props.designOptions)
+  );
+
+  // Make a clean copy of the model object to avoid reactivity issues
+  const modelCopy = {
+    id: model.id,
+    name: model.name,
+  };
+
+  // Emit both events with the clean model copy
+  emit("add-model-to-design-option", modelCopy, option);
+  emit("model-selected", modelCopy);
 };
 </script>
 

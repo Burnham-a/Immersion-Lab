@@ -70,20 +70,10 @@
             {{ isObjectMovementEnabled ? "Disable" : "Enable" }} Object Movement
           </button>
 
-          <!-- Add mode selector buttons -->
+          <!-- Simplify the controls to only show translation mode -->
           <div v-if="isObjectMovementEnabled" class="flex gap-1 mt-1">
-            <button
-              v-for="mode in ['translate', 'rotate', 'scale'] as Array<'translate' | 'rotate' | 'scale'>"
-              :key="mode"
-              @click="setTransformMode(mode)"
-              class="px-2 py-1 rounded text-xs"
-              :class="
-                currentTransformMode === mode
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-200 text-gray-700'
-              "
-            >
-              {{ mode.charAt(0).toUpperCase() + mode.slice(1) }}
+            <button class="px-2 py-1 rounded text-xs bg-blue-500 text-white">
+              Translate Mode
             </button>
           </div>
         </div>
@@ -95,13 +85,16 @@
         {{ viewerState.error }}
       </div>
     </div>
-
-    <!-- Google Map Section -->
-    <div class="w-full" style="height: 30vh; min-height: 250px">
+    <br />
+    <!-- Google Map Section - Added margin-top for spacing -->
+    <div class="w-full mt-12" style="height: 30vh; min-height: 250px">
       <h2 class="text-xl font-semibold text-gray-800 mb-2">Map View</h2>
       <div class="w-full h-full">
-        <!-- Google map component -->
-        <GoogleMap ref="googleMap" class="rounded-lg overflow-hidden shadow" />
+        <!-- Google map component - fix class prop warning -->
+        <div class="rounded-lg overflow-hidden shadow">
+          <GoogleMap ref="googleMap" />
+        </div>
+        <br />
       </div>
     </div>
   </div>
@@ -135,6 +128,7 @@ import {
 } from "@speckle/viewer";
 import * as THREE from "three";
 import { Object3D, Vector3, Box3 } from "three";
+// Fix the TypeScript error by importing TransformControls with explicit type annotation
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 
 // Define an extended interface for the TransformControls
@@ -155,386 +149,325 @@ const viewerState = reactive({
   loadingModelIds: new Set<string>(),
 });
 
-// ExtendedSelection class implementation for object movement
+// Updated ExtendedSelection class to be compatible with Speckle Viewer API
 class ExtendedSelection extends SelectionExtension {
   /** Store selected objects */
   public selectionRvs: Record<string, any> = {};
+
   // Add static ID to properly register the extension
   static get extensionId() {
     return "extended-selection";
   }
 
-  /** This object will receive the TransformControls translation */
-  private dummyAnchor: Object3D = new Object3D();
-  /** Stock three.js gizmo */
-  private transformControls: ExtendedTransformControls | undefined;
-  private lastGizmoTranslation: Vector3 = new Vector3();
-  // Add a property to store camera controller for disable/enable during dragging
-  protected cameraProvider: any = null;
-  // Add mode support
-  private currentMode: "translate" | "rotate" | "scale" = "translate";
+  // Update the type reference to avoid the error
+  private transformControls: TransformControls | null = null;
+
+  // Store selected objects - use any[] to avoid TypeScript errors with Speckle objects
+  private selectedObjects: any[] = [];
+
+  // Track if initialized
+  private isInitialized = false;
+
+  // Original positions for undo
+  private originalPositions = new Map<THREE.Object3D, THREE.Vector3>();
+
+  // Constructor to accept viewer instance directly
+  constructor(viewer: Viewer) {
+    // Call the parent constructor correctly - don't try to get CameraController yet
+    const cameraController = viewer.getExtension(CameraController);
+    if (!cameraController) {
+      throw new Error("CameraController is required but not found.");
+    }
+    super(viewer, cameraController);
+  }
 
   public init() {
-    /** We set the layers to PROPS so that the viewer regular pipeline ignores it */
-    this.dummyAnchor.layers.set(ObjectLayers.PROPS);
-    this.viewer.getRenderer().scene.add(this.dummyAnchor);
+    if (this.isInitialized) return;
 
-    // Store camera controller reference
-    this.cameraProvider = this.viewer.getExtension(CameraController);
-
-    // Initialize the gizmo
-    this.initGizmo();
-  }
-
-  /** Initialize the transform controls */
-  private initGizmo() {
     try {
-      // Get the camera from the viewer's renderer
-      const camera = this.viewer.getRenderer().renderingCamera;
-      if (!camera) {
-        console.error("Cannot initialize gizmo: No camera available");
-        return;
+      console.log("Initializing ExtendedSelection transform controls...");
+
+      // Make sure CameraController is created first
+      const cameraController = this.viewer.getExtension(CameraController);
+      if (!cameraController) {
+        console.warn("CameraController not found, creating it first");
+        this.viewer.createExtension(CameraController);
       }
 
-      // Get essential elements
-      const domElement = this.viewer.getRenderer().renderer.domElement;
-      const scene = this.viewer.getRenderer().scene;
-
-      // CRITICAL FIX: Create a proper wrapper approach that Three.js will accept
-      // Create a simple wrapper that extends Object3D and contains our controls
-      class TransformControlsWrapper extends THREE.Object3D {
-        controls: TransformControls;
-
-        constructor(camera: THREE.Camera, dom: HTMLElement) {
-          super();
-          this.controls = new TransformControls(camera, dom);
-
-          // Add the actual controls as a child to this wrapper object
-          super.add(this.controls as unknown as THREE.Object3D);
-        }
-
-        // Add proper TypeScript class methods (not property assignments)
-        attach(target: THREE.Object3D): this {
-          this.controls.attach(target);
-          return this;
-        }
-
-        detach(): this {
-          this.controls.detach();
-          return this;
-        }
-
-        // Override updateMatrixWorld to delegate to controls
-        updateMatrixWorld(force?: boolean): void {
-          super.updateMatrixWorld(force);
-          // Check if the method exists on controls
-          // Removed call to updateMatrixWorld as it does not exist on TransformControls
-        }
-
-        // Define proper method signatures for TransformControls
-        setMode(mode: "translate" | "rotate" | "scale"): void {
-          this.controls.setMode(mode as any);
-        }
-
-        setSize(size: number): void {
-          this.controls.setSize(size);
-        }
-
-        getRaycaster(): THREE.Raycaster {
-          return (this.controls as any).getRaycaster();
-        }
-
-        // Override addEventListener to forward events properly
-        addEventListener<T extends keyof THREE.Object3DEventMap>(
-          type: T,
-          listener: THREE.EventListener<THREE.Object3DEventMap[T], T, this>
-        ): void {
-          // Forward the event from the inner controls to this wrapper
-          this.controls.addEventListener(
-            type,
-            (event: THREE.Object3DEventMap[T]) => {
-              // Forward the event to the wrapper's listeners
-              this.dispatchEvent({ ...event, type });
-            }
-          );
-        }
-
-        // Property forwarding with proper TypeScript getter/setter definitions
-        get visible(): boolean {
-          return this.controls.visible;
-        }
-
-        set visible(value: boolean) {
-          this.controls.visible = value;
-        }
-
-        get enabled(): boolean {
-          return (this.controls as any).enabled;
-        }
-
-        set enabled(value: boolean) {
-          (this.controls as any).enabled = value;
-        }
-
-        get object(): THREE.Object3D | undefined {
-          return this.controls.object;
-        }
-
-        // Override children getter to include control's children
-        get children(): THREE.Object3D[] {
-          return [...super.children];
-        }
-      }
-
-      // Create properly wrapped controls that Three.js can accept as an Object3D
-      const wrapper = new TransformControlsWrapper(camera, domElement);
-      this.transformControls = wrapper as unknown as ExtendedTransformControls;
-
-      // Now we can safely use the wrapper methods
-      this.transformControls.setSize(0.75);
-      this.transformControls.visible = true;
-      this.transformControls.enabled = true;
-      this.transformControls.setMode(this.currentMode);
-
-      // Now we can safely add it to the scene as it's a proper Object3D
-      scene.add(this.transformControls as unknown as THREE.Object3D);
-      console.log("Successfully added wrapped controls to scene");
-
-      // Add event listeners directly to our wrapper
-      this.transformControls.addEventListener("change", () => {
-        this.viewer.requestRender();
-      });
-
-      this.transformControls.addEventListener("dragging-changed", (event) => {
-        if (this.cameraProvider) {
-          this.cameraProvider.enabled = !event.value;
-        }
-      });
-
-      this.transformControls.addEventListener(
-        "objectChange",
-        this.onAnchorChanged.bind(this)
-      );
-
-      // Now attach our dummy anchor object
-      this.dummyAnchor.position.set(0, 0, 0);
-      this.transformControls.attach(this.dummyAnchor);
-
-      // Set layers after attachment
+      // Wait a moment to ensure the viewer is fully initialized
       setTimeout(() => {
-        // Setting raycaster and axis helper layers
-        if (this.transformControls) {
-          // Check if children exists and manually traverse the hierarchy
-          if (this.transformControls.children) {
-            this.transformControls.children.forEach((child) => {
-              // Use Object3D traverse method on each child instead
-              if (child && child.traverse) {
-                child.traverse((obj) => {
-                  obj.layers.set(ObjectLayers.PROPS);
-                });
-              }
-            });
-          }
+        this.initializeTransformControls();
+      }, 500);
+    } catch (error) {
+      console.error("Failed to initialize transform controls:", error);
+    }
+  }
 
-          // Set raycaster layer if the method exists
-          if (this.transformControls.getRaycaster) {
-            this.transformControls
-              .getRaycaster()
-              .layers.set(ObjectLayers.PROPS);
-          }
+  private initializeTransformControls() {
+    try {
+      // Get required components from viewer
+      const renderer = this.viewer.getRenderer();
+      if (!renderer) {
+        console.error("Renderer not available");
+        return;
+      }
 
-          // Force a render to update visibility
-          this.viewer.requestRender(UpdateFlags.RENDER_RESET);
-        }
-      }, 100);
+      const camera = renderer.renderingCamera;
+      const domElement = renderer.renderer.domElement;
 
-      // Add event listeners for interaction
+      if (!camera || !domElement) {
+        console.error("Camera or DOM element not available");
+        return;
+      }
+
+      // Create transform controls
+      this.transformControls = new TransformControls(camera, domElement);
+
+      // CRITICAL: Set mode to translate only
+      this.transformControls.setMode("translate");
+
+      // Set size and appearance
+      this.transformControls.setSize(1.2);
+
+      // Fix: Properly add TransformControls to scene
+      // TransformControls inherits from Object3D so we shouldn't need a cast
+      try {
+        renderer.scene.add(this.transformControls as unknown as THREE.Object3D);
+        console.log("Transform controls added to scene successfully");
+      } catch (err) {
+        console.error("Error adding transform controls to scene:", err);
+      }
+
+      // Add event listeners
       this.transformControls.addEventListener("change", () => {
         this.viewer.requestRender();
       });
 
-      this.transformControls.addEventListener("dragging-changed", (event) => {
-        if (this.cameraProvider) {
-          this.cameraProvider.enabled = !event.value;
-        }
-      });
-
       this.transformControls.addEventListener(
-        "objectChange",
-        this.onAnchorChanged.bind(this)
-      );
+        "dragging-changed",
+        (event: any) => {
+          // Disable camera controls while dragging
+          const cameraController = this.viewer.getExtension(CameraController);
+          if (cameraController) {
+            cameraController.enabled = !event.value;
+          }
 
-      console.log("Transform controls initialized successfully");
-
-      // Force a full render to ensure controls are visible
-      this.viewer.requestRender(UpdateFlags.RENDER_RESET);
-    } catch (error) {
-      console.error("Error initializing gizmo:", error);
-    }
-  }
-
-  /** Update gizmo position based on selection */
-  public updateGizmo(attach: boolean) {
-    if (!this.transformControls) {
-      console.log("No transform controls available");
-      return;
-    }
-
-    try {
-      // If not visible or no transform controls, hide and return
-      if (!attach || !isObjectMovementEnabled.value) {
-        if (this.transformControls) {
-          this.transformControls.detach();
-          this.transformControls.visible = false;
-        }
-        return;
-      }
-
-      // Get object IDs of selected objects
-      const selectedIds = Object.keys(this.selectionRvs);
-      if (selectedIds.length === 0) {
-        if (this.transformControls) {
-          this.transformControls.detach();
-          this.transformControls.visible = false;
-        }
-        return;
-      }
-
-      // Calculate bounding box for all selected objects
-      const box = new Box3();
-      let hasValidObjects = false;
-
-      for (const id of selectedIds) {
-        const batchObject = this.viewer
-          .getRenderer()
-          ?.getObject(this.selectionRvs[id]);
-
-        if (batchObject) {
-          // Try to use the object's own AABB if available
-          if (batchObject.aabb) {
-            box.union(batchObject.aabb);
-            hasValidObjects = true;
-          } else {
-            // Fall back to calculating from the object if needed
-            try {
-              const objectBox = new Box3().setFromObject(
-                batchObject as unknown as THREE.Object3D
-              );
-              if (!objectBox.isEmpty()) {
-                box.union(objectBox);
-                hasValidObjects = true;
-              }
-            } catch (e) {
-              console.warn("Error setting box from object:", e);
+          // Store original positions when starting drag
+          if (event.value && this.transformControls?.object) {
+            const obj = this.transformControls.object;
+            if (!this.originalPositions.has(obj)) {
+              this.originalPositions.set(obj, obj.position.clone());
             }
           }
+
+          // Apply changes to all selected objects when dragging ends
+          if (!event.value && this.transformControls?.object) {
+            this.applyTransformation();
+          }
         }
-      }
+      );
 
-      if (!hasValidObjects || box.isEmpty()) {
-        if (this.transformControls) {
-          this.transformControls.detach();
-          this.transformControls.visible = false;
-        }
-        return;
-      }
+      // Fix: Use visible property instead of enabled
+      this.transformControls.enabled = false;
 
-      // Get center of bounding box
-      const center = new Vector3();
-      box.getCenter(center);
-
-      // Update dummy anchor position
-      this.dummyAnchor.position.copy(center);
-      this.lastGizmoTranslation.copy(center);
-
-      // Make sure transform controls are attached and visible
-      if (this.transformControls) {
-        this.transformControls.attach(this.dummyAnchor);
-        this.transformControls.visible = true;
-      }
-
-      // Force render update
-      this.viewer.requestRender();
-    } catch (err) {
-      console.warn("Error updating transform gizmo:", err);
+      this.isInitialized = true;
+      console.log("Transform controls initialized successfully");
+    } catch (error) {
+      console.error("Error in initializeTransformControls:", error);
     }
   }
 
-  public selectObjects(ids: Array<string>, multiSelect = false) {
-    super.selectObjects(ids, multiSelect);
-    this.updateGizmo(ids.length > 0);
+  // Apply transformation to all selected objects
+  private applyTransformation() {
+    if (!this.transformControls?.object) return;
+
+    const controlObject = this.transformControls.object;
+
+    // Object IDs in selection
+    const selectedIds = Object.keys(this.selectionRvs);
+
+    for (const id of selectedIds) {
+      // Get the actual object from viewer
+      const object = this.viewer.getRenderer().getObject(this.selectionRvs[id]);
+
+      if (object) {
+        // Apply the new position
+        try {
+          // Only handle translation for simplicity
+          object.transformTRS(
+            controlObject.position,
+            undefined,
+            undefined,
+            undefined
+          );
+        } catch (err) {
+          console.warn(`Failed to transform object ${id}:`, err);
+        }
+      }
+    }
+
+    // Request render with necessary flags
+    this.viewer.requestRender(UpdateFlags.RENDER_RESET | UpdateFlags.SHADOWS);
   }
 
   /** This is called when objects are clicked */
   protected onObjectClicked(selection: SelectionEvent) {
-    /** Do whatever the base extension is doing */
-    super.onObjectClicked(selection);
+    console.log("Object clicked:", selection);
 
-    // Update the gizmo based on selection
+    // Don't call the base class implementation to avoid default behavior
+    // super.onObjectClicked(selection);
+
+    // Don't clear existing selection
+    // this.selectObjects([]);
+
+    // Process the new selection
     if (
       selection &&
-      Array.isArray(selection.multiple) &&
-      selection.multiple.length > 0
+      ((Array.isArray(selection.multiple) && selection.multiple.length > 0) ||
+        (selection.hits && selection.hits.length > 0))
     ) {
-      this.updateGizmo(true);
-    } else {
-      this.updateGizmo(false);
+      // Use hits data if available or fall back to multiple
+      const objectIds = Array.isArray(selection.multiple)
+        ? selection.multiple
+        : selection.hits?.map((hit) => hit.node.id) || [];
+
+      // Filter out undefined IDs
+      const validIds = objectIds.filter((id) => id !== undefined) as string[];
+
+      if (validIds.length > 0) {
+        super.selectObjects(validIds);
+        this.updateGizmo(true, validIds);
+      }
     }
+    // Don't hide the gizmo if no selection
+    // else {
+    //   this.hideGizmo();
+    // }
   }
 
-  // Add a method to set the transform mode
-  public setMode(mode: "translate" | "rotate" | "scale") {
-    if (this.transformControls) {
-      this.currentMode = mode;
-      this.transformControls.setMode(mode);
-      this.viewer.requestRender();
-    }
-  }
+  // Update the gizmo position and attach to object
+  public updateGizmo(show: boolean, objectIds: string[] = []) {
+    if (!this.transformControls || !this.isInitialized) return;
 
-  /** This is where the transformation gets applied */
-  private onAnchorChanged() {
-    // Calculate the delta position from the last transformation
-    const anchorPos = new Vector3().copy(this.dummyAnchor.position);
-    const anchorPosDelta = anchorPos.clone().sub(this.lastGizmoTranslation);
-
-    // Apply the movement to all selected objects
-    for (const k in this.selectionRvs) {
-      const batchObject = this.viewer
-        .getRenderer()
-        .getObject(this.selectionRvs[k]);
-
-      /** Only objects of type mesh can have batch objects.
-       *  Lines and points do not
-       */
-      if (!batchObject) continue;
-
-      /** Apply the transformation - calculate the new position */
-      const newPosition = anchorPosDelta.clone().add(batchObject.translation);
-
-      /** Apply the transformation */
-      batchObject.transformTRS(newPosition, undefined, undefined, undefined);
+    // If we should hide the gizmo
+    if (!show || objectIds.length === 0) {
+      this.hideGizmo();
+      return;
     }
 
-    // Update our reference position
-    this.lastGizmoTranslation.copy(this.dummyAnchor.position);
+    try {
+      console.log(`Updating gizmo for ${objectIds.length} objects`);
 
-    // Request render update with necessary flags
-    this.viewer.requestRender(UpdateFlags.RENDER_RESET | UpdateFlags.SHADOWS);
-  }
+      // Get all selected objects
+      const objects = [];
+      const center = new THREE.Vector3();
+      let count = 0;
 
-  public enableTransformControls(enabled: boolean) {
-    if (this.transformControls) {
-      if (!enabled) {
-        this.transformControls.detach();
-        this.transformControls.visible = false;
-      } else {
-        // When enabling, if we have selected objects, show the gizmo again
-        const selectedIds = Object.keys(this.selectionRvs);
-        if (selectedIds.length > 0) {
-          this.updateGizmo(true);
+      for (const id of objectIds) {
+        const object = this.viewer
+          .getRenderer()
+          .getObject(this.selectionRvs[id]);
+        if (object) {
+          objects.push(object);
+
+          // Add position to calculate average
+          if (object.translation) {
+            center.add(object.translation);
+            count++;
+          }
         }
       }
+
+      if (objects.length === 0) {
+        console.log("No objects found for gizmo");
+        this.hideGizmo();
+        return;
+      }
+
+      // If we have positions, calculate center
+      if (count > 0) {
+        center.divideScalar(count);
+      }
+
+      // Create a dummy object at the center position
+      const dummyObject = new THREE.Object3D();
+      dummyObject.position.copy(center);
+      dummyObject.userData.isGizmoAnchor = true;
+
+      // Add the dummy to the scene first
+      this.viewer.getRenderer().scene.add(dummyObject);
+
+      // Debug logging
+      console.log(
+        `Created dummy object at position: ${center.x}, ${center.y}, ${center.z}`
+      );
+
+      // Show the transform controls
+      this.transformControls.attach(dummyObject);
+
+      // Fix: Use both enabled and enabled properties
+      this.transformControls.enabled = true;
+
+      // Make sure to re-add the transform controls if needed
+      if (!this.transformControls?.object) {
+        console.log("Re-adding transform controls to scene");
+        this.viewer
+          .getRenderer()
+          .scene.add(this.transformControls as unknown as THREE.Object3D);
+      }
+
+      // Force transform controls to update
+      // Removed unnecessary call to updateMatrixWorld
+
+      // Keep a reference to selected objects
+      this.selectedObjects = objects;
+
+      console.log(
+        `Gizmo attached at position (${center.x}, ${center.y}, ${center.z})`
+      );
+
+      // Force a render to show the changes
       this.viewer.requestRender();
+    } catch (error) {
+      console.error("Error updating gizmo:", error);
+      this.hideGizmo();
+    }
+  }
+
+  // Hide gizmo - fix to use enabled property consistently
+  public hideGizmo() {
+    if (!this.transformControls) return;
+
+    try {
+      console.log("Hiding transform gizmo");
+      this.transformControls.enabled = false;
+      this.transformControls.detach();
+      this.viewer.requestRender();
+    } catch (err) {
+      console.error("Error hiding gizmo:", err);
+    }
+  }
+
+  // Enable/disable transform controls
+  public enableTransformControls(enabled: boolean) {
+    if (!this.transformControls) return;
+
+    if (!enabled) {
+      this.hideGizmo();
+    } else if (Object.keys(this.selectionRvs).length > 0) {
+      this.updateGizmo(true, Object.keys(this.selectionRvs));
+    }
+  }
+
+  // Override select objects to update gizmo immediately
+  public selectObjects(ids: Array<string>, multiSelect = false) {
+    super.selectObjects(ids, multiSelect);
+
+    // Always update gizmo when selection changes
+    if (ids.length > 0) {
+      this.updateGizmo(true, ids);
+    } else {
+      this.hideGizmo();
     }
   }
 }
@@ -772,7 +705,12 @@ const updateViewerBackgroundColor = (color: string) => {
 
 // Simplified model loading function
 const loadModels = async () => {
-  if (!props.selectedProject || !viewer.value) return;
+  if (!props.selectedProject || !viewer.value) {
+    console.warn(
+      "Cannot load models: No project selected or viewer not initialized"
+    );
+    return;
+  }
 
   try {
     // Set loading state
@@ -809,7 +747,7 @@ const loadModels = async () => {
 
     // Update loading state with total count
     viewerState.loadingModelIds.clear();
-    modelsToLoad.forEach((model) => {
+    modelsToLoad.forEach((model: { id?: string }) => {
       if (model?.id) viewerState.loadingModelIds.add(model.id);
     });
 
@@ -927,7 +865,7 @@ const initializeViewer = async () => {
     // Configure viewer parameters
     const viewerParams = {
       ...DefaultViewerParams,
-      verbose: false, // Reduce console output
+      verbose: true, // Enable verbose for debugging
       showStats: false, // Hide stats for better performance
       renderer: {
         antialias: true,
@@ -940,10 +878,36 @@ const initializeViewer = async () => {
 
     // Create and initialize viewer
     const viewerInstance = new Viewer(viewerContainer.value, viewerParams);
-    viewerInstance.createExtension(ExtendedSelection);
 
+    // First initialize the viewer
     await viewerInstance.init();
     viewer.value = markRaw(viewerInstance);
+
+    // Create essential base extensions first
+    const cameraController = viewerInstance.createExtension(CameraController);
+    console.log("Created CameraController:", cameraController);
+
+    // Then create the regular selection extension
+    const selectionExt = viewerInstance.createExtension(SelectionExtension);
+    console.log("Created SelectionExtension:", selectionExt);
+
+    // Initialize our custom extension
+    console.log("Creating ExtendedSelection extension");
+    try {
+      // Try a more direct approach for creating the extension
+      const extendedSelectionInstance = new ExtendedSelection(viewerInstance);
+
+      // Register our extension manually
+      viewerInstance.createExtension(ExtendedSelection);
+
+      objectMovementExtension.value = extendedSelectionInstance;
+      extendedSelectionInstance.init();
+
+      console.log("Successfully created and initialized ExtendedSelection");
+    } catch (error) {
+      console.error("Failed to create ExtendedSelection:", error);
+      viewerState.error = "Failed to initialize object movement controls";
+    }
 
     // Ensure canvas has correct style
     const canvas = viewerContainer.value.querySelector("canvas");
@@ -957,9 +921,6 @@ const initializeViewer = async () => {
       canvas.style.display = "block";
       debugInfo.value = `Created: ${canvas.width}x${canvas.height}`;
     }
-
-    // Add essential extension
-    viewerInstance.createExtension(CameraController);
 
     // Add resize observer
     const resizeObserver = new ResizeObserver(() => {
@@ -983,6 +944,11 @@ const initializeViewer = async () => {
     updateViewerBackgroundColor(props.viewerBackgroundColor);
     viewerInstance.resize();
     viewerInstance.requestRender();
+
+    // Enable object movement by default (only if extension was created successfully)
+    if (objectMovementExtension.value) {
+      isObjectMovementEnabled.value = true;
+    }
 
     return viewer.value;
   } catch (error) {
@@ -1051,25 +1017,16 @@ const setMapPosition = (lat: number, lng: number) => {
   }
 };
 
-// Toggle object movement mode
+// Toggle object movement mode - simplify to only enable/disable
 const toggleObjectMovement = () => {
   isObjectMovementEnabled.value = !isObjectMovementEnabled.value;
+
+  console.log("Object movement toggled:", isObjectMovementEnabled.value);
 
   if (objectMovementExtension.value) {
     objectMovementExtension.value.enableTransformControls(
       isObjectMovementEnabled.value
     );
-
-    // Force a selection update to refresh gizmo state
-    if (isObjectMovementEnabled.value && viewer.value) {
-      if (viewer.value && viewer.value.getExtension) {
-        const selectionExtension = viewer.value.getExtension(ExtendedSelection);
-        const selectedIds = Object.keys(
-          objectMovementExtension.value?.selectionRvs || {}
-        );
-        selectionExtension.selectObjects(selectedIds, true);
-      }
-    }
   }
 
   if (viewer.value) {
@@ -1077,46 +1034,38 @@ const toggleObjectMovement = () => {
   }
 };
 
-// Initialize object movement extension with more debugging
+// Initialize object movement extension - simplified version
 const initObjectMovementExtension = () => {
   if (!viewer.value || !viewerState.initialized) return null;
 
   try {
     console.log("Initializing object movement extension...");
 
-    // First check if the extension already exists
+    // Get the extension we created earlier
     let extension = viewer.value.getExtension(ExtendedSelection);
 
-    // If not, create it
     if (!extension) {
+      console.log("Creating new ExtendedSelection extension");
       extension = viewer.value.createExtension(ExtendedSelection);
     }
 
-    console.log("Extension created:", extension);
-
     if (extension) {
+      console.log("Extension found, initializing");
       objectMovementExtension.value = extension;
-
-      // Ensure transform controls are initialized
       extension.init();
 
-      // Register a direct listener to handle object selection events
+      // Register a direct listener for debugging
       viewer.value.on(ViewerEvent.ObjectClicked, (event) => {
-        console.log("Selection event received:", event);
-        if (extension && isObjectMovementEnabled.value) {
-          // Force update the gizmo after a short delay to ensure proper positioning
-          setTimeout(() => {
-            extension.enableTransformControls(true);
-            extension.updateGizmo(true); // Ensure gizmo is shown
-            viewer.value?.requestRender();
-          }, 100);
-        }
+        console.log("Object clicked event:", event);
       });
 
-      // Enable by default right away
-      extension.enableTransformControls(isObjectMovementEnabled.value);
-      extension.setMode(currentTransformMode.value);
+      // Enable by default
+      extension.enableTransformControls(true);
+
+      // Force a render
       viewer.value.requestRender();
+    } else {
+      console.warn("Failed to initialize or find extension");
     }
 
     return extension;
@@ -1126,12 +1075,9 @@ const initObjectMovementExtension = () => {
   }
 };
 
-// Set transform mode
-const setTransformMode = (mode: "translate" | "rotate" | "scale") => {
-  currentTransformMode.value = mode;
-  if (objectMovementExtension.value) {
-    objectMovementExtension.value.setMode(mode);
-  }
+// Remove transform mode functions since we're focusing only on translation
+const setTransformMode = () => {
+  // Do nothing - we only support translate mode
 };
 
 // Export public methods

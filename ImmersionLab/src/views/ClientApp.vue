@@ -1,5 +1,13 @@
 <template>
   <div class="client-home">
+    <!-- Development Disclaimer -->
+    <div
+      class="disclaimer mb-6 p-3 bg-yellow-100 border border-yellow-400 text-yellow-800 rounded-md"
+    >
+      <strong>⚠️ Disclaimer:</strong> This page is currently under development.
+      Content and functionality may be incomplete or subject to change.
+    </div>
+
     <h1 class="text-3xl font-bold mb-6">Enter Project Code</h1>
     <input
       v-model="projectNumber"
@@ -21,10 +29,78 @@
       v-if="projectData"
       class="project-info mt-6 p-4 bg-gray-50 rounded-lg text-left"
     >
-      <h2 class="text-xl font-semibold mb-2">{{ projectData.name }}</h2>
+      <h2 class="text-xl font-semibold mb-2">
+        {{ projectData.project?.name || "Unnamed Project" }}
+      </h2>
       <p class="text-sm text-gray-500">
-        Last updated: {{ formatDate(projectData.savedAt) }}
+        Last updated: {{ formatDate(projectData.timestamp) }}
       </p>
+
+      <!-- Display model information -->
+      <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- Option 1 Models -->
+        <div class="border rounded-lg p-3 bg-blue-50">
+          <h3 class="font-medium text-lg mb-2 text-blue-700">
+            Option 1 Models
+          </h3>
+          <div
+            v-if="
+              !projectData.designOptions?.Option1 ||
+              projectData.designOptions.Option1.length === 0
+            "
+            class="text-gray-500 italic"
+          >
+            No models selected
+          </div>
+          <ul v-else class="space-y-1">
+            <li
+              v-for="(model, index) in projectData.designOptions.Option1"
+              :key="`opt1-${index}`"
+              class="text-sm py-1 px-2 bg-white rounded"
+            >
+              {{ model.name }}
+            </li>
+          </ul>
+        </div>
+
+        <!-- Option 2 Models -->
+        <div class="border rounded-lg p-3 bg-green-50">
+          <h3 class="font-medium text-lg mb-2 text-green-700">
+            Option 2 Models
+          </h3>
+          <div
+            v-if="
+              !projectData.designOptions?.Option2 ||
+              projectData.designOptions.Option2.length === 0
+            "
+            class="text-gray-500 italic"
+          >
+            No models selected
+          </div>
+          <ul v-else class="space-y-1">
+            <li
+              v-for="(model, index) in projectData.designOptions.Option2"
+              :key="`opt2-${index}`"
+              class="text-sm py-1 px-2 bg-white rounded"
+            >
+              {{ model.name }}
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="mt-3 text-sm">
+        <span class="font-medium">Active Option: </span>
+        <span
+          :class="{
+            'text-orange-600': projectData.activeOption === 'Option1',
+            'text-green-600': projectData.activeOption === 'Option2',
+            'text-purple-600': projectData.activeOption === 'Both',
+          }"
+        >
+          {{ projectData.activeOption }}
+        </span>
+      </div>
     </div>
 
     <ClientDesignSelect
@@ -94,6 +170,40 @@ const formatDate = (dateString) => {
 const goToProjectViewer = async () => {
   const trimmedCode = projectNumber.value.trim();
   if (trimmedCode) {
+    // First check if it's a share code (contains a hyphen)
+    if (trimmedCode.includes("-")) {
+      try {
+        // Parse the share code (format: PREFIX-BASE64DATA)
+        const parts = trimmedCode.split("-");
+        if (parts.length < 2) {
+          throw new Error("Invalid share code format");
+        }
+
+        // Extract and decode the base64 data part
+        const encodedData = parts.slice(1).join("-"); // In case there are multiple hyphens
+        const jsonData = atob(encodedData);
+        const decodedData = JSON.parse(jsonData);
+
+        console.log("Decoded project data:", decodedData);
+
+        // Set the project data
+        projectData.value = decodedData;
+
+        // Initialize design option from the decoded data
+        if (decodedData.activeOption) {
+          selectedDesignOption.value = decodedData.activeOption;
+        }
+
+        errorMessage.value = null;
+        return;
+      } catch (error) {
+        errorMessage.value = "Invalid share code format";
+        console.error("Error decoding share code:", error);
+        return;
+      }
+    }
+
+    // If not a share code, try the original local storage lookup
     const storedData = localStorage.getItem(trimmedCode);
     if (storedData) {
       try {

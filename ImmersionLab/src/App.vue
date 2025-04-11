@@ -277,7 +277,7 @@ footer {
 }
 
 .app-button.router-link-exact-active {
-  background-color: #2d672f;
+  background-color: #4169e1;
   color: white !important;
 }
 
@@ -291,7 +291,7 @@ footer {
 }
 
 [data-theme="dark"] .app-button.router-link-exact-active {
-  background-color: #3c6540;
+  background-color: #ff9900;
 }
 
 @media (min-width: 1024px) {
