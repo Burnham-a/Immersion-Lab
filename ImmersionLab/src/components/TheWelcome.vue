@@ -123,18 +123,12 @@ import SupportIcon from "./icons/IconSupport.vue";
 
       <ul class="feature-list">
         <li>
-          This workplan is more than achievable in 6 months, we already have the
-          google tile workflow that PW have been working on this year
+          Unfortunately we were not able to implement all the features we
+          intended as other deadlines took over.
         </li>
-        <li>
-          We have already have prior experience with converting geometry using
-          speckle based on previous hackathon experience
-        </li>
-        <li>
-          The hours will be spent on researching how to combine the tools
-          mentioned, designing a sleek workflow to try and automate a process
-          that can be used on multiple projects going forward
-        </li>
+
+        <li>Adding all animation elements from Step2 into the final App.</li>
+        <li>Client App not being able to visualise the model.</li>
       </ul>
     </WelcomeItem>
 

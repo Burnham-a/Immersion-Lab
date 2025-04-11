@@ -1,9 +1,5 @@
 # Immersion Lab
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Burnham-a/Immersion-Lab/main/src/assets/Logo_IL.svg" alt="Immersion Lab Logo" width="300"/>
-</p>
-
 A web application built by Perkins and Will for interactive exploration of 3D models and design options. Integrates with Speckle for a seamless workflow between design tools and the visualization environment. This app is part of the Innovation Incubator Research
 
 ## Features
