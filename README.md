@@ -1,7 +1,7 @@
 # Immersion Lab
 
 <p align="center">
-  <img src="./src/assets/Logo_IL.svg" alt="Immersion Lab Logo" width="300"/>
+  <img src="https://raw.githubusercontent.com/Burnham-a/Immersion-Lab/main/src/assets/Logo_IL.svg" alt="Immersion Lab Logo" width="300"/>
 </p>
 
 A web application built by Perkins and Will for interactive exploration of 3D models and design options. Integrates with Speckle for a seamless workflow between design tools and the visualization environment. This app is part of the Innovation Incubator Research
@@ -56,7 +56,7 @@ A web application built by Perkins and Will for interactive exploration of 3D mo
 
 ## Usage
 
-1. **Login with Speckle**: Access your projects and models
+1. **Login with Speckle**: Access your projects and models that are saved on
 2. **Browse Projects**: Filter and select from your available projects
 3. **Explore Models**: Navigate through 3D models using the built-in viewer
 4. **Compare Design Options**: Switch between different design iterations
@@ -85,9 +85,42 @@ ImmersionLab/
 └── package.json      # Project dependencies and scripts
 ```
 
-## License
+## Technology Stack
 
-This project is licensed under the MIT License.
+### Vue.js Framework
+
+This project is built using Vue.js, a progressive JavaScript framework that offers:
+
+- **Component-Based Architecture**: Allows for building complex UIs from small, self-contained components
+- **Reactive Data Binding**: Provides efficient two-way data binding for responsive interfaces
+- **Vibrant Ecosystem**: Integration with other tools like Vue Router and Pinia for state management
+- **Developer Experience**: Fast development cycles with hot-reloading and comprehensive tooling
+- **Performance**: Lightweight virtual DOM implementation for efficient rendering
+
+Vue was selected for this project due to its excellent balance between performance, developer experience, and flexibility when working with 3D visualization libraries.
+
+### Speckle Extensions
+
+#### Speckle Viewer
+
+The application leverages `@speckle/viewer`, which provides:
+
+- **WebGL Rendering**: High-performance 3D model visualization in the browser
+- **Selection and Filtering**: Interactive object selection and property filtering
+- **Sectioning Tools**: Create dynamic section cuts through models
+- **Camera Controls**: Intuitive navigation of 3D space
+- **Custom Styling**: Apply colors and materials based on object properties
+
+#### Speckle Authentication
+
+We use `@speckle/speckle-auth` to handle user authentication:
+
+- **OAuth Integration**: Seamless login with Speckle credentials
+- **Token Management**: Secure storage and refresh of authentication tokens
+- **User Information**: Access to user profile and permissions
+- **Server Connection**: Facilitates secure connections to Speckle servers
+
+These Speckle extensions enable direct integration with the Speckle platform, allowing for a streamlined workflow between design tools and this visualization application.
 
 ## Acknowledgments
 
@@ -103,3 +136,11 @@ Unfortunately we were not able to implement all the features we intended as othe
 
 - Adding all animation elements from Step2 into the final App.
 - Client App not being able to visualise the model.
+
+# The Future
+
+We would like to progress this app, to create more functionality in the viewer for clients, so that they are able to view and interact with our designs in a much better way.
+
+## License
+
+This project is licensed under the MIT License.
